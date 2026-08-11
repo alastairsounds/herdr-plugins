@@ -1,0 +1,53 @@
+# Scope for now: git status detail, and whichever language module self-detects
+# (bun/nodejs/python/rust).
+
+add_newline = false
+
+format = """
+$rust$nodejs$bun$python\
+$git_branch\
+$git_status\
+$git_state\
+"""
+
+[git_branch]
+format = '[$symbol$branch(:$remote_branch)]($style) '
+
+[git_status]
+disabled = false
+style = "bold yellow"
+format = '[$all_status$ahead_behind]($style)'
+conflicted = '[=$count ](fg:196)'
+ahead = '[⇡$count ](fg:76)'
+behind = '[⇣$count ](fg:76)'
+diverged = '[⇕⇡$ahead_count⇣$behind_count ](fg:76)'
+untracked = '[?$count ](fg:39)'
+stashed = '[*$count ](fg:76)'
+modified = '[!$count ](fg:178)'
+staged = '[+$count ](fg:178)'
+renamed = '[»$count ](fg:178)'
+deleted = '[✘$count ](fg:196)'
+
+[rust]
+disabled = false
+symbol = "󱘗 "
+style = "fg:#DEA584"
+format = '[$symbol]($style)'
+
+[nodejs]
+disabled = false
+symbol = "󰎙 "
+style = "fg:#68A063"
+format = '[$symbol]($style)'
+
+[bun]
+disabled = false
+symbol = " "
+style = "fg:#FBF0DF"
+format = '[$symbol]($style)'
+
+[python]
+disabled = false
+symbol = " "
+style = "fg:#3776AB"
+format = '[$symbol]($style)'
