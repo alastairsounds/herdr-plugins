@@ -1,3 +1,4 @@
+mod fitter;
 mod starship;
 
 fn main() {
