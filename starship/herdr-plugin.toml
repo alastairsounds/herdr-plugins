@@ -1,0 +1,24 @@
+id = "herdr-starship"
+name = "herdr-starship"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+description = "Renders starship modules onto a Herdr workspace's sidebar via report-metadata"
+platforms = ["macos"]
+
+[[build]]
+command = ["cargo", "build"]
+
+[[startup]]
+command = ["target/debug/herdr-starship", "26", "--push"]
+
+[[events]]
+on = "worktree.created"
+command = ["target/debug/herdr-starship", "26", "--push"]
+
+[[events]]
+on = "workspace.created"
+command = ["target/debug/herdr-starship", "26", "--push"]
+
+[[events]]
+on = "workspace.focused"
+command = ["target/debug/herdr-starship", "26", "--push"]

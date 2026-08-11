@@ -83,14 +83,14 @@ pub fn report_metadata(workspace_id: &str, tokens: &[(&str, &str)]) -> Result<()
     Ok(())
 }
 
+// Stops races between env-mutating tests and tests that need an intact `PATH`.
+#[cfg(test)]
+pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
-    use std::sync::Mutex;
-
-    // Protect tests that change PATH with mutex to avoid races / failures
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn init_temp_repo(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(name);

@@ -1,6 +1,259 @@
 mod fitter;
 mod starship;
 
+use fitter::Module;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+const MODULES: [&str; 5] = ["directory", "git_branch", "git_status", "git_state", "rust"];
+
+/// Reads `workspace_cwd` from `HERDR_PLUGIN_CONTEXT_JSON`, since Herdr runs hooks in the
+/// plugin's own directory, not the workspace's. Uses the current directory otherwise.
+fn target_repo() -> PathBuf {
+    std::env::var("HERDR_PLUGIN_CONTEXT_JSON")
+        .ok()
+        .and_then(|json| extract_json_string(&json, "workspace_cwd"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().expect("no current directory"))
+}
+
+/// Finds a top-level `"key":"value"` field in text, without a full JSON parse.
+fn extract_json_string(json: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{key}\":\"");
+    let start = json.find(&needle)? + needle.len();
+    let end = json[start..].find('"')? + start;
+    Some(json[start..end].to_string())
+}
+
+/// Runs `starship prompt` to render the whole configured line in one call.
+fn invoke_prompt(repo: &Path, config: &Path) -> String {
+    let output = Command::new("starship")
+        .arg("prompt")
+        .arg("--path")
+        .arg(repo)
+        .arg("--terminal-width")
+        .arg("200")
+        .env("STARSHIP_CONFIG", config)
+        // Removes `STARSHIP_SHELL` so output is plain ANSI, not zsh's `%{...%}` markers.
+        .env_remove("STARSHIP_SHELL")
+        .output()
+        .expect("failed to run starship prompt");
+    String::from_utf8_lossy(&output.stdout).to_string()
+}
+
+/// Composite `starship` entry goes first: `fit()` drops the last entry first, and most
+/// sidebar configs render only `$starship`.
+fn collect_modules(repo: &Path, config: &Path) -> Vec<Module> {
+    let mut rendered = vec![Module { name: "starship".to_string(), content: invoke_prompt(repo, config) }];
+    rendered.extend(MODULES.into_iter().filter_map(|name| {
+        match starship::invoke_module(name, repo, Some(config)) {
+            Ok(content) => Some(Module { name: name.to_string(), content }),
+            Err(e) => {
+                eprintln!("{name}: adapter error: {e:?}");
+                None
+            }
+        }
+    }));
+    rendered
+}
+
+fn parse_budget(args: &[String]) -> usize {
+    args.get(1).and_then(|a| a.parse().ok()).unwrap_or(26)
+}
+
+fn wants_push(args: &[String]) -> bool {
+    args.iter().any(|a| a == "--push")
+}
+
+/// Herdr's token store mangles raw ANSI, so this strips it before every push.
+fn push_tokens(workspace_id: &str, modules: &[Module]) -> Result<(), starship::AdapterError> {
+    let stripped: Vec<(String, String)> = modules
+        .iter()
+        .map(|m| (m.name.clone(), fitter::strip_ansi(&m.content)))
+        .collect();
+    let tokens: Vec<(&str, &str)> =
+        stripped
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    starship::report_metadata(workspace_id, &tokens)
+}
+
 fn main() {
-    println!("Hello, world!");
+    let repo = target_repo();
+    let config = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/starship-herdr.toml");
+    let args: Vec<String> = std::env::args().collect();
+    let budget = parse_budget(&args);
+
+    let rendered = collect_modules(&repo, &config);
+    println!("--- raw `starship module <name>` output (plus one composite `starship prompt`) ---");
+    for m in &rendered {
+        println!("{:>12}: {:?}  (rendered: {}\x1b[0m)", m.name, m.content, m.content);
+    }
+
+    let fitted = fitter::fit(rendered, budget);
+    println!("\n--- fitted to budget={budget} columns ---");
+    for m in &fitted {
+        println!("{:>12}: {:?}  (rendered: {}\x1b[0m)", m.name, m.content, m.content);
+    }
+
+    if wants_push(&args) {
+        let workspace_id = std::env::var("HERDR_WORKSPACE_ID")
+            .expect("--push requires HERDR_WORKSPACE_ID (run inside a herdr session)");
+        match push_tokens(&workspace_id, &fitted) {
+            Ok(()) => println!("\npushed to workspace {workspace_id}"),
+            Err(e) => eprintln!("\nreport_metadata error: {e:?}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_json_string_finds_top_level_field() {
+        let json = r#"{"workspace_id":"w1","workspace_cwd":"/tmp/repo","tab_id":"w1:t1"}"#;
+        let result = extract_json_string(json, "workspace_cwd");
+
+        assert_eq!(result, Some("/tmp/repo".to_string()));
+    }
+
+    #[test]
+    fn extract_json_string_returns_none_when_key_missing() {
+        let json = r#"{"workspace_id":"w1"}"#;
+        let result = extract_json_string(json, "workspace_cwd");
+
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn target_repo_falls_back_to_current_dir_when_context_json_absent() {
+        let _guard = starship::ENV_LOCK.lock().unwrap();
+        let original = std::env::var("HERDR_PLUGIN_CONTEXT_JSON").ok();
+        unsafe { std::env::remove_var("HERDR_PLUGIN_CONTEXT_JSON") };
+
+        let result = target_repo();
+
+        if let Some(value) = original {
+            unsafe { std::env::set_var("HERDR_PLUGIN_CONTEXT_JSON", value) };
+        }
+        assert_eq!(result, std::env::current_dir().unwrap());
+    }
+
+    #[test]
+    fn target_repo_reads_workspace_cwd_from_context_json_when_present() {
+        let _guard = starship::ENV_LOCK.lock().unwrap();
+        let original = std::env::var("HERDR_PLUGIN_CONTEXT_JSON").ok();
+        unsafe {
+            std::env::set_var(
+                "HERDR_PLUGIN_CONTEXT_JSON",
+                r#"{"workspace_id":"w1","workspace_cwd":"/tmp/some-other-repo"}"#,
+            );
+        }
+
+        let result = target_repo();
+
+        match original {
+            Some(value) => unsafe { std::env::set_var("HERDR_PLUGIN_CONTEXT_JSON", value) },
+            None => unsafe { std::env::remove_var("HERDR_PLUGIN_CONTEXT_JSON") },
+        }
+        assert_eq!(result, PathBuf::from("/tmp/some-other-repo"));
+    }
+
+    #[test]
+    fn parse_budget_defaults_to_26_when_arg_missing() {
+        let args = vec!["herdr-starship".to_string()];
+        let result = parse_budget(&args);
+
+        assert_eq!(result, 26);
+    }
+
+    #[test]
+    fn parse_budget_parses_provided_arg() {
+        let args = vec!["herdr-starship".to_string(), "40".to_string()];
+        let result = parse_budget(&args);
+
+        assert_eq!(result, 40);
+    }
+
+    #[test]
+    fn wants_push_true_when_flag_present() {
+        let args = vec!["herdr-starship".to_string(), "26".to_string(), "--push".to_string()];
+        let result = wants_push(&args);
+
+        assert!(result);
+    }
+
+    #[test]
+    fn wants_push_false_when_flag_absent() {
+        let args = vec!["herdr-starship".to_string(), "26".to_string()];
+        let result = wants_push(&args);
+
+        assert!(!result);
+    }
+
+    /// **Starship**: modules include the composite `starship` entry.
+    #[test]
+    fn collect_modules_includes_composite_starship_prompt_entry() {
+        let _guard = starship::ENV_LOCK.lock().unwrap();
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let config = repo.join("examples/starship-herdr.toml");
+        let result = collect_modules(repo, &config);
+
+        assert!(result.iter().any(|m| m.name == "starship"));
+    }
+
+    /// Disposable, unfocused `herdr` workspace for `push_tokens` tests. Closes on drop.
+    struct ScratchWorkspace {
+        id: String,
+    }
+
+    impl ScratchWorkspace {
+        fn create(label: &str) -> Self {
+            let output = Command::new("herdr")
+                .args(["workspace", "create", "--no-focus", "--label", label])
+                .output()
+                .expect("herdr workspace create failed to run");
+            assert!(
+                output.status.success(),
+                "herdr workspace create failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            // Minimal text search, not a full JSON parse. For example: `{"...,"workspace_id":"w3V",...}`
+            let key = "\"workspace_id\":\"";
+            let start = stdout.find(key).expect("no workspace_id in create output") + key.len();
+            let end = stdout[start..].find('"').unwrap() + start;
+            ScratchWorkspace { id: stdout[start..end].to_string() }
+        }
+        fn tokens_json(&self) -> String {
+            let output = Command::new("herdr")
+                .args(["workspace", "get", &self.id])
+                .output()
+                .expect("herdr workspace get failed to run");
+            String::from_utf8_lossy(&output.stdout).to_string()
+        }
+    }
+
+    impl Drop for ScratchWorkspace {
+        fn drop(&mut self) {
+            let _ = Command::new("herdr").args(["workspace", "close", &self.id]).output();
+        }
+    }
+
+    /// **Herdr**: writes ANSI-stripped tokens to the workspace's metadata.
+    #[test]
+    fn push_tokens_strips_ansi_before_writing_to_workspace() {
+        let _guard = starship::ENV_LOCK.lock().unwrap();
+        let ws = ScratchWorkspace::create("herdr-starship-main-test-push-tokens");
+        let modules = vec![Module {
+            name: "git_state".to_string(),
+            content: "\x1b[1;33mREBASING\x1b[0m".to_string(),
+        }];
+
+        push_tokens(&ws.id, &modules).unwrap();
+
+        assert!(ws.tokens_json().contains(r#""git_state":"REBASING""#));
+    }
 }
