@@ -25,6 +25,18 @@ fn extract_json_string(json: &str, key: &str) -> Option<String> {
     Some(json[start..end].to_string())
 }
 
+/// A user's own `starship.toml` in Herdr's per-plugin config dir wins over the bundled
+/// default, so customizing the prompt never requires editing this repo.
+fn config_path() -> PathBuf {
+    if let Some(dir) = std::env::var_os("HERDR_PLUGIN_CONFIG_DIR") {
+        let user_config = PathBuf::from(dir).join("starship.toml");
+        if user_config.is_file() {
+            return user_config;
+        }
+    }
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/starship-herdr.toml")
+}
+
 /// Runs `starship prompt` to render the whole configured line in one call.
 fn invoke_prompt(repo: &Path, config: &Path) -> String {
     let output = Command::new("starship")
@@ -81,7 +93,7 @@ fn push_tokens(workspace_id: &str, modules: &[Module]) -> Result<(), starship::A
 
 fn main() {
     let repo = target_repo();
-    let config = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/starship-herdr.toml");
+    let config = config_path();
     let args: Vec<String> = std::env::args().collect();
     let budget = parse_budget(&args);
 
@@ -139,6 +151,67 @@ mod tests {
             unsafe { std::env::set_var("HERDR_PLUGIN_CONTEXT_JSON", value) };
         }
         assert_eq!(result, std::env::current_dir().unwrap());
+    }
+
+    /// Falls back to the bundled config when `HERDR_PLUGIN_CONFIG_DIR` is unset.
+    #[test]
+    fn config_path_falls_back_to_bundled_default_when_env_unset() {
+        let _guard = starship::ENV_LOCK.lock().unwrap();
+        let original = std::env::var("HERDR_PLUGIN_CONFIG_DIR").ok();
+        unsafe { std::env::remove_var("HERDR_PLUGIN_CONFIG_DIR") };
+
+        let result = config_path();
+
+        if let Some(value) = original {
+            unsafe { std::env::set_var("HERDR_PLUGIN_CONFIG_DIR", value) };
+        }
+        assert_eq!(
+            result,
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/starship-herdr.toml")
+        );
+    }
+
+    /// Falls back to the bundled config when the dir is set but has no `starship.toml`.
+    #[test]
+    fn config_path_falls_back_when_user_config_missing() {
+        let _guard = starship::ENV_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join("herdr-starship-test-config-dir-empty");
+        std::fs::create_dir_all(&dir).unwrap();
+        let original = std::env::var("HERDR_PLUGIN_CONFIG_DIR").ok();
+        unsafe { std::env::set_var("HERDR_PLUGIN_CONFIG_DIR", &dir) };
+
+        let result = config_path();
+
+        match original {
+            Some(value) => unsafe { std::env::set_var("HERDR_PLUGIN_CONFIG_DIR", value) },
+            None => unsafe { std::env::remove_var("HERDR_PLUGIN_CONFIG_DIR") },
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(
+            result,
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/starship-herdr.toml")
+        );
+    }
+
+    /// A `starship.toml` present in `HERDR_PLUGIN_CONFIG_DIR` overrides the bundled default.
+    #[test]
+    fn config_path_prefers_user_config_when_present() {
+        let _guard = starship::ENV_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join("herdr-starship-test-config-dir-override");
+        std::fs::create_dir_all(&dir).unwrap();
+        let user_config = dir.join("starship.toml");
+        std::fs::write(&user_config, "add_newline = false\n").unwrap();
+        let original = std::env::var("HERDR_PLUGIN_CONFIG_DIR").ok();
+        unsafe { std::env::set_var("HERDR_PLUGIN_CONFIG_DIR", &dir) };
+
+        let result = config_path();
+
+        match original {
+            Some(value) => unsafe { std::env::set_var("HERDR_PLUGIN_CONFIG_DIR", value) },
+            None => unsafe { std::env::remove_var("HERDR_PLUGIN_CONFIG_DIR") },
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(result, user_config);
     }
 
     #[test]
