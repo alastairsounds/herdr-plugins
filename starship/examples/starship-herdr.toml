@@ -42,12 +42,12 @@ format = '[$symbol]($style)'
 
 [bun]
 disabled = false
-symbol = " "
+symbol = " "
 style = "fg:#FBF0DF"
 format = '[$symbol]($style)'
 
 [python]
 disabled = false
-symbol = " "
+symbol = " "
 style = "fg:#3776AB"
 format = '[$symbol]($style)'
