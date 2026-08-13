@@ -6,10 +6,18 @@ just:
 install:
     cargo build
 
+# Format the code
+format:
+    cargo fmt
+
 # Build the project
-build:
+build: lint
     cargo build
 
 # Run the test suite
 test *args:
     cargo test {{args}}
+
+# Lint the project
+lint:
+    cargo clippy -- -D warnings
