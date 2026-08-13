@@ -4,6 +4,7 @@ mod starship;
 use fitter::Module;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use unicode_width::UnicodeWidthStr;
 
 const MODULES: [&str; 5] = ["directory", "git_branch", "git_status", "git_state", "rust"];
 
@@ -74,6 +75,26 @@ fn collect_modules(repo: &Path, config: &Path) -> Vec<Module> {
     rendered
 }
 
+/// Cosmetic column width of `s`, ANSI codes stripped. Uses `unicode-width`'s raw
+/// count so alignment matches how most terminals actually render.
+fn column_width(s: &str) -> usize {
+    UnicodeWidthStr::width(fitter::strip_ansi(s).as_str())
+}
+
+fn print_modules(modules: &[Module]) {
+    let max_width = modules
+        .iter()
+        .map(|m| column_width(&m.content))
+        .max()
+        .unwrap_or(0);
+    for m in modules {
+        let pad = " ".repeat(max_width - column_width(&m.content) + 2);
+        let debug = format!("{:?}", m.content);
+        let raw = &debug[1..debug.len() - 1];
+        println!("{:>12}: {}\x1b[0m{pad}(r#\"{raw}\")", m.name, m.content);
+    }
+}
+
 fn parse_budget(args: &[String]) -> usize {
     args.get(1).and_then(|a| a.parse().ok()).unwrap_or(26)
 }
@@ -102,22 +123,12 @@ fn main() {
     let budget = parse_budget(&args);
 
     let rendered = collect_modules(&repo, &config);
-    println!("--- raw `starship module <name>` output (plus one composite `starship prompt`) ---");
-    for m in &rendered {
-        println!(
-            "{:>12}: {:?}  (rendered: {}\x1b[0m)",
-            m.name, m.content, m.content
-        );
-    }
+    println!("--- output (raw output) ---");
+    print_modules(&rendered);
 
     let fitted = fitter::fit(rendered, budget);
     println!("\n--- fitted to budget={budget} columns ---");
-    for m in &fitted {
-        println!(
-            "{:>12}: {:?}  (rendered: {}\x1b[0m)",
-            m.name, m.content, m.content
-        );
-    }
+    print_modules(&fitted);
 
     if wants_push(&args) {
         let workspace_id = std::env::var("HERDR_WORKSPACE_ID")
