@@ -1,23 +1,33 @@
 [private]
 just:
-    @just --list --list-prefix="--> "
+    @just --list --unsorted --list-prefix='--> '
 
 # Install dependencies
+[group('prep')]
 install:
     cargo build
 
-# Format the code
-format:
-    cargo fmt
-
 # Build the project
+[group('dev')]
 build: lint
     cargo build
 
 # Run the test suite
+[group('dev')]
 test *args:
     cargo test {{args}}
 
-# Lint the project
+# Run the project
+[group('dev')]
+run:
+    cargo run
+
+# Lint the projet
+[group('format')]
 lint:
     cargo clippy -- -D warnings
+
+# Format the code
+[group('format')]
+format:
+    cargo fmt
