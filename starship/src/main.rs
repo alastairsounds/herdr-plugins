@@ -59,12 +59,14 @@ fn collect_modules(repo: &Path, config: &Path) -> Vec<Module> {
     let mut rendered = vec![Module::new("starship", invoke_prompt(repo, config))];
     rendered.extend(MODULES.into_iter().filter_map(|name| {
         match starship::invoke_module(name, repo, Some(config)) {
-            Ok(content) if name == "directory" => {
-                Some(Module::with_abbreviate(name, content, fitter::abbreviate_directory))
-            }
+            Ok(content) if name == "directory" => Some(Module::with_abbreviate(
+                name,
+                content,
+                fitter::abbreviate_directory,
+            )),
             Ok(content) => Some(Module::new(name, content)),
             Err(e) => {
-                eprintln!("{name}: adapter error: {e:?}");
+                eprintln!("{name}: adapter error: {e}");
                 None
             }
         }
@@ -86,8 +88,7 @@ fn push_tokens(workspace_id: &str, modules: &[Module]) -> Result<(), starship::A
         .iter()
         .map(|m| (m.name.clone(), fitter::strip_ansi(&m.content)))
         .collect();
-    let tokens: Vec<(&str, &str)> =
-        stripped
+    let tokens: Vec<(&str, &str)> = stripped
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
@@ -103,13 +104,19 @@ fn main() {
     let rendered = collect_modules(&repo, &config);
     println!("--- raw `starship module <name>` output (plus one composite `starship prompt`) ---");
     for m in &rendered {
-        println!("{:>12}: {:?}  (rendered: {}\x1b[0m)", m.name, m.content, m.content);
+        println!(
+            "{:>12}: {:?}  (rendered: {}\x1b[0m)",
+            m.name, m.content, m.content
+        );
     }
 
     let fitted = fitter::fit(rendered, budget);
     println!("\n--- fitted to budget={budget} columns ---");
     for m in &fitted {
-        println!("{:>12}: {:?}  (rendered: {}\x1b[0m)", m.name, m.content, m.content);
+        println!(
+            "{:>12}: {:?}  (rendered: {}\x1b[0m)",
+            m.name, m.content, m.content
+        );
     }
 
     if wants_push(&args) {
@@ -117,7 +124,7 @@ fn main() {
             .expect("--push requires HERDR_WORKSPACE_ID (run inside a herdr session)");
         match push_tokens(&workspace_id, &fitted) {
             Ok(()) => println!("\npushed to workspace {workspace_id}"),
-            Err(e) => eprintln!("\nreport_metadata error: {e:?}"),
+            Err(e) => eprintln!("\nreport_metadata error: {e}"),
         }
     }
 }
@@ -255,7 +262,11 @@ mod tests {
 
     #[test]
     fn wants_push_true_when_flag_present() {
-        let args = vec!["herdr-starship".to_string(), "26".to_string(), "--push".to_string()];
+        let args = vec![
+            "herdr-starship".to_string(),
+            "26".to_string(),
+            "--push".to_string(),
+        ];
         let result = wants_push(&args);
 
         assert!(result);
@@ -301,7 +312,9 @@ mod tests {
             let key = "\"workspace_id\":\"";
             let start = stdout.find(key).expect("no workspace_id in create output") + key.len();
             let end = stdout[start..].find('"').unwrap() + start;
-            ScratchWorkspace { id: stdout[start..end].to_string() }
+            ScratchWorkspace {
+                id: stdout[start..end].to_string(),
+            }
         }
         fn tokens_json(&self) -> String {
             let output = Command::new("herdr")
@@ -314,7 +327,9 @@ mod tests {
 
     impl Drop for ScratchWorkspace {
         fn drop(&mut self) {
-            let _ = Command::new("herdr").args(["workspace", "close", &self.id]).output();
+            let _ = Command::new("herdr")
+                .args(["workspace", "close", &self.id])
+                .output();
         }
     }
 

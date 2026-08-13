@@ -10,6 +10,15 @@ pub enum AdapterError {
     Timeout,
 }
 
+impl std::fmt::Display for AdapterError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AdapterError::Failed(msg) => write!(f, "{msg}"),
+            AdapterError::Timeout => write!(f, "timed out"),
+        }
+    }
+}
+
 pub fn invoke_module(
     name: &str,
     worktree_path: &Path,
@@ -163,7 +172,7 @@ mod tests {
     }
 
     /// **Starship**: Malformed config file writes an error to stderr, but still produces valid output.
-    /// 
+    ///
     /// We want a bad config file to push no tokens, so this function must return Err even when
     /// starship succeeds with a fallback.
     #[test]
@@ -221,11 +230,17 @@ mod tests {
         let canary = std::env::temp_dir().join("herdr-starship-injection-canary");
         let _ = fs::remove_file(&canary);
         // Canary acts as a sentinel for shell injection. If the test fails, the canary file will be created.
-        let dir_name = format!("herdr-starship-test-injection; touch {} #", canary.display());
+        let dir_name = format!(
+            "herdr-starship-test-injection; touch {} #",
+            canary.display()
+        );
         let dir = init_temp_repo(&dir_name);
         let _ = invoke_module("directory", &dir, None);
 
-        assert!(!canary.exists(), "shell metacharacters in worktree_path were interpreted");
+        assert!(
+            !canary.exists(),
+            "shell metacharacters in worktree_path were interpreted"
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -241,13 +256,19 @@ mod tests {
                 .args(["workspace", "create", "--no-focus", "--label", label])
                 .output()
                 .expect("herdr workspace create failed to run");
-            assert!(output.status.success(), "herdr workspace create failed: {}", String::from_utf8_lossy(&output.stderr));
+            assert!(
+                output.status.success(),
+                "herdr workspace create failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
             let stdout = String::from_utf8_lossy(&output.stdout);
             // Minimal text search, not full JSON parse. e.g. `{"...,"workspace_id":"w3V",...}`
             let key = "\"workspace_id\":\"";
             let start = stdout.find(key).expect("no workspace_id in create output") + key.len();
             let end = stdout[start..].find('"').unwrap() + start;
-            ScratchWorkspace { id: stdout[start..end].to_string() }
+            ScratchWorkspace {
+                id: stdout[start..end].to_string(),
+            }
         }
         fn tokens_json(&self) -> String {
             let output = Command::new("herdr")
@@ -260,7 +281,9 @@ mod tests {
 
     impl Drop for ScratchWorkspace {
         fn drop(&mut self) {
-            let _ = Command::new("herdr").args(["workspace", "close", &self.id]).output();
+            let _ = Command::new("herdr")
+                .args(["workspace", "close", &self.id])
+                .output();
         }
     }
 
