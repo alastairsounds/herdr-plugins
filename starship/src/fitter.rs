@@ -2,10 +2,42 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;
 
 /// One rendered starship module: allowlist name plus styled, ANSI-included content.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Module {
     pub name: String,
     pub content: String,
+    pub abbreviate: Option<fn(&str) -> String>,
+}
+
+// Excludes `abbreviate` bc fn-pointer equality is unreliable
+impl PartialEq for Module {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.content == other.content
+    }
+}
+
+impl Eq for Module {}
+
+impl Module {
+    pub fn new(name: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            content: content.into(),
+            abbreviate: None,
+        }
+    }
+
+    pub fn with_abbreviate(
+        name: impl Into<String>,
+        content: impl Into<String>,
+        abbreviate: fn(&str) -> String,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            content: content.into(),
+            abbreviate: Some(abbreviate),
+        }
+    }
 }
 
 const SEPARATOR_WIDTH: usize = 1;
@@ -20,7 +52,11 @@ fn is_private_use(ch: char) -> bool {
 /// Terminals disagree on real glyph width, so overestimating is the safe direction.
 fn glyph_display_width(ch: char) -> usize {
     let width = UnicodeWidthChar::width(ch).unwrap_or(0);
-    if is_private_use(ch) { width.max(2) } else { width }
+    if is_private_use(ch) {
+        width.max(2)
+    } else {
+        width
+    }
 }
 
 fn grapheme_width(g: &str) -> usize {
@@ -82,10 +118,7 @@ fn display_width(s: &str) -> usize {
 
 /// Total width of `modules`: sum of content widths plus separators between them.
 fn total_width(modules: &[Module]) -> usize {
-    let content: usize = modules
-        .iter()
-        .map(|m| display_width(&m.content))
-        .sum();
+    let content: usize = modules.iter().map(|m| display_width(&m.content)).sum();
     let separators = modules.len().saturating_sub(1) * SEPARATOR_WIDTH;
     content + separators
 }
@@ -159,12 +192,14 @@ pub fn fit(modules: Vec<Module>, budget: usize) -> Vec<Module> {
             return modules;
         }
 
-        // `directory` gets a soft degrade (basename, then truncate) before removal. Every
-        // other module just drops. This keeps a cheap drop for `git_status`/`git_branch`
-        // rather than spending truncation effort on a module about to disappear anyway.
-        if name == "directory" {
+        // Soft-degrades before dropping, only if this module carries an `abbreviate` fn.
+        let abbreviate = modules
+            .iter()
+            .find(|m| m.name == *name)
+            .and_then(|m| m.abbreviate);
+        if let Some(abbreviate) = abbreviate {
             if let Some(m) = modules.iter_mut().find(|m| m.name == *name) {
-                m.content = abbreviate_directory(&m.content);
+                m.content = abbreviate(&m.content);
             }
             if fits(&modules, budget) {
                 return modules;
@@ -199,14 +234,19 @@ pub fn strip_ansi(s: &str) -> String {
 }
 
 /// Shortens a path to its final component (basename), keeping ANSI spans intact around it.
-fn abbreviate_directory(content: &str) -> String {
+pub fn abbreviate_directory(content: &str) -> String {
     let mut spans = split_ansi_spans(content);
     if let Some(i) = spans.iter().rposition(|s| matches!(s, Span::Text(_))) {
         if let Span::Text(t) = spans[i] {
             spans[i] = Span::Text(t.rsplit('/').next().unwrap_or(t));
         }
     }
-    spans.into_iter().map(|s| match s { Span::Text(t) | Span::Escape(t) => t }).collect()
+    spans
+        .into_iter()
+        .map(|s| match s {
+            Span::Text(t) | Span::Escape(t) => t,
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -217,8 +257,8 @@ mod tests {
     #[test]
     fn fit_everything_fits_returns_unchanged() {
         let modules = vec![
-            Module { name: "directory".into(), content: "~/code".into() },
-            Module { name: "git_branch".into(), content: "main".into() },
+            Module::new("directory", "~/code"),
+            Module::new("git_branch", "main"),
         ];
         let result = fit(modules.clone(), 26);
 
@@ -230,19 +270,19 @@ mod tests {
     #[test]
     fn fit_drop_git_state_alone_resolves_rest_untouched() {
         let modules = vec![
-            Module { name: "directory".into(), content: "~/code".into() },
-            Module { name: "git_branch".into(), content: "main".into() },
-            Module { name: "git_status".into(), content: "M2".into() },
-            Module { name: "git_state".into(), content: "REBASING".into() },
+            Module::new("directory", "~/code"),
+            Module::new("git_branch", "main"),
+            Module::new("git_status", "M2"),
+            Module::new("git_state", "REBASING"),
         ];
         let result = fit(modules, 21);
 
         assert_eq!(
             result,
             vec![
-                Module { name: "directory".into(), content: "~/code".into() },
-                Module { name: "git_branch".into(), content: "main".into() },
-                Module { name: "git_status".into(), content: "M2".into() },
+                Module::new("directory", "~/code"),
+                Module::new("git_branch", "main"),
+                Module::new("git_status", "M2"),
             ]
         );
     }
@@ -252,18 +292,18 @@ mod tests {
     #[test]
     fn fit_drop_cascade_stops_once_git_state_and_git_status_are_gone() {
         let modules = vec![
-            Module { name: "directory".into(), content: "~/code".into() },
-            Module { name: "git_branch".into(), content: "main".into() },
-            Module { name: "git_status".into(), content: "M2".into() },
-            Module { name: "git_state".into(), content: "REBASING".into() },
+            Module::new("directory", "~/code"),
+            Module::new("git_branch", "main"),
+            Module::new("git_status", "M2"),
+            Module::new("git_state", "REBASING"),
         ];
         let result = fit(modules, 13);
 
         assert_eq!(
             result,
             vec![
-                Module { name: "directory".into(), content: "~/code".into() },
-                Module { name: "git_branch".into(), content: "main".into() },
+                Module::new("directory", "~/code"),
+                Module::new("git_branch", "main"),
             ]
         );
     }
@@ -273,20 +313,20 @@ mod tests {
     #[test]
     fn fit_priority_follows_module_input_order() {
         let modules = vec![
-            Module { name: "git_state".into(), content: "REBASING".into() },
-            Module { name: "git_status".into(), content: "M2".into() },
-            Module { name: "git_branch".into(), content: "main".into() },
-            Module { name: "directory".into(), content: "~/code".into() },
+            Module::new("git_state", "REBASING"),
+            Module::new("git_status", "M2"),
+            Module::new("git_branch", "main"),
+            Module::with_abbreviate("directory", "~/code", abbreviate_directory),
         ];
         let result = fit(modules, 21);
 
         assert_eq!(
             result,
             vec![
-                Module { name: "git_state".into(), content: "REBASING".into() },
-                Module { name: "git_status".into(), content: "M2".into() },
-                Module { name: "git_branch".into(), content: "main".into() },
-                Module { name: "directory".into(), content: "code".into() },
+                Module::new("git_state", "REBASING"),
+                Module::new("git_status", "M2"),
+                Module::new("git_branch", "main"),
+                Module::with_abbreviate("directory", "code", abbreviate_directory),
             ]
         );
     }
@@ -296,8 +336,8 @@ mod tests {
     #[test]
     fn fit_directory_drops_when_no_room_even_truncated() {
         let modules = vec![
-            Module { name: "directory".into(), content: "abcdefghij".into() },
-            Module { name: "git_state".into(), content: "Z".into() },
+            Module::with_abbreviate("directory", "abcdefghij", abbreviate_directory),
+            Module::new("git_state", "Z"),
         ];
         let result = fit(modules, 0);
 
@@ -310,22 +350,24 @@ mod tests {
     #[test]
     fn fit_abbreviate_directory_preserves_ansi_styling() {
         let modules = vec![
-            Module { name: "git_state".into(), content: "REBASING".into() },
-            Module {
-                name: "directory".into(),
-                content: "\x1b[1;33m~/code/herdr-starship\x1b[0m".into(),
-            },
+            Module::new("git_state", "REBASING"),
+            Module::with_abbreviate(
+                "directory",
+                "\x1b[1;33m~/code/herdr-starship\x1b[0m",
+                abbreviate_directory,
+            ),
         ];
         let result = fit(modules, 25);
 
         assert_eq!(
             result,
             vec![
-                Module { name: "git_state".into(), content: "REBASING".into() },
-                Module {
-                    name: "directory".into(),
-                    content: "\x1b[1;33mherdr-starship\x1b[0m".into(),
-                },
+                Module::new("git_state", "REBASING"),
+                Module::with_abbreviate(
+                    "directory",
+                    "\x1b[1;33mherdr-starship\x1b[0m",
+                    abbreviate_directory,
+                ),
             ]
         );
     }
@@ -334,16 +376,16 @@ mod tests {
     #[test]
     fn fit_abbreviate_directory_to_basename() {
         let modules = vec![
-            Module { name: "git_state".into(), content: "REBASING".into() },
-            Module { name: "directory".into(), content: "~/code/herdr-starship".into() },
+            Module::new("git_state", "REBASING"),
+            Module::with_abbreviate("directory", "~/code/herdr-starship", abbreviate_directory),
         ];
         let result = fit(modules, 25);
 
         assert_eq!(
             result,
             vec![
-                Module { name: "git_state".into(), content: "REBASING".into() },
-                Module { name: "directory".into(), content: "herdr-starship".into() },
+                Module::new("git_state", "REBASING"),
+                Module::with_abbreviate("directory", "herdr-starship", abbreviate_directory),
             ]
         );
     }
@@ -352,16 +394,38 @@ mod tests {
     #[test]
     fn fit_hard_truncate_appends_ellipsis_at_safe_boundary() {
         let modules = vec![
-            Module { name: "git_state".into(), content: "Z".into() },
-            Module { name: "directory".into(), content: "/x/abcdefghij".into() },
+            Module::new("git_state", "Z"),
+            Module::with_abbreviate("directory", "/x/abcdefghij", abbreviate_directory),
         ];
         let result = fit(modules, 6);
 
         assert_eq!(
             result,
             vec![
-                Module { name: "git_state".into(), content: "Z".into() },
-                Module { name: "directory".into(), content: "abc…".into() },
+                Module::new("git_state", "Z"),
+                Module::with_abbreviate("directory", "abc…", abbreviate_directory),
+            ]
+        );
+    }
+
+    /// Abbreviate any module with a custom function
+    #[test]
+    fn fit_abbreviate_applies_to_any_module_carrying_the_fn() {
+        fn first_word(content: &str) -> String {
+            content.split(' ').next().unwrap_or(content).to_string()
+        }
+
+        let modules = vec![
+            Module::new("git_state", "REBASING"),
+            Module::with_abbreviate("custom", "hello world", first_word),
+        ];
+        let result = fit(modules, 14);
+
+        assert_eq!(
+            result,
+            vec![
+                Module::new("git_state", "REBASING"),
+                Module::with_abbreviate("custom", "hello", first_word),
             ]
         );
     }
@@ -370,7 +434,7 @@ mod tests {
     /// its content does not fit the budget.
     #[test]
     fn fit_git_state_drops_when_it_alone_exceeds_budget() {
-        let modules = vec![Module { name: "git_state".into(), content: "(REBASING 1/1)".into() }];
+        let modules = vec![Module::new("git_state", "(REBASING 1/1)")];
         let result = fit(modules, 1);
 
         assert_eq!(result, Vec::<Module>::new());
@@ -399,16 +463,16 @@ mod tests {
     #[test]
     fn fit_double_width_glyph_at_boundary_not_split() {
         let modules = vec![
-            Module { name: "git_state".into(), content: "Z".into() },
-            Module { name: "directory".into(), content: "abc字".into() },
+            Module::new("git_state", "Z"),
+            Module::with_abbreviate("directory", "abc字", abbreviate_directory),
         ];
         let result = fit(modules, 6);
 
         assert_eq!(
             result,
             vec![
-                Module { name: "git_state".into(), content: "Z".into() },
-                Module { name: "directory".into(), content: "abc…".into() },
+                Module::new("git_state", "Z"),
+                Module::with_abbreviate("directory", "abc…", abbreviate_directory),
             ]
         );
     }

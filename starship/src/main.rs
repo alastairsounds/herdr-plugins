@@ -56,10 +56,13 @@ fn invoke_prompt(repo: &Path, config: &Path) -> String {
 /// Composite `starship` entry goes first: `fit()` drops the last entry first, and most
 /// sidebar configs render only `$starship`.
 fn collect_modules(repo: &Path, config: &Path) -> Vec<Module> {
-    let mut rendered = vec![Module { name: "starship".to_string(), content: invoke_prompt(repo, config) }];
+    let mut rendered = vec![Module::new("starship", invoke_prompt(repo, config))];
     rendered.extend(MODULES.into_iter().filter_map(|name| {
         match starship::invoke_module(name, repo, Some(config)) {
-            Ok(content) => Some(Module { name: name.to_string(), content }),
+            Ok(content) if name == "directory" => {
+                Some(Module::with_abbreviate(name, content, fitter::abbreviate_directory))
+            }
+            Ok(content) => Some(Module::new(name, content)),
             Err(e) => {
                 eprintln!("{name}: adapter error: {e:?}");
                 None
@@ -320,10 +323,7 @@ mod tests {
     fn push_tokens_strips_ansi_before_writing_to_workspace() {
         let _guard = starship::ENV_LOCK.lock().unwrap();
         let ws = ScratchWorkspace::create("herdr-starship-main-test-push-tokens");
-        let modules = vec![Module {
-            name: "git_state".to_string(),
-            content: "\x1b[1;33mREBASING\x1b[0m".to_string(),
-        }];
+        let modules = vec![Module::new("git_state", "\x1b[1;33mREBASING\x1b[0m")];
 
         push_tokens(&ws.id, &modules).unwrap();
 
