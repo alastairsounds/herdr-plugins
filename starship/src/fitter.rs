@@ -236,10 +236,10 @@ pub fn strip_ansi(s: &str) -> String {
 /// Shortens a path to its final component (basename), keeping ANSI spans intact around it.
 pub fn abbreviate_directory(content: &str) -> String {
     let mut spans = split_ansi_spans(content);
-    if let Some(i) = spans.iter().rposition(|s| matches!(s, Span::Text(_))) {
-        if let Span::Text(t) = spans[i] {
-            spans[i] = Span::Text(t.rsplit('/').next().unwrap_or(t));
-        }
+    if let Some(i) = spans.iter().rposition(|s| matches!(s, Span::Text(_)))
+        && let Span::Text(t) = spans[i]
+    {
+        spans[i] = Span::Text(t.rsplit('/').next().unwrap_or(t));
     }
     spans
         .into_iter()
