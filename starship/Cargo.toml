@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 unicode-width = "0.2"
 unicode-segmentation = "1"
+toml = { version = "1", default-features = false, features = ["parse", "serde"] }

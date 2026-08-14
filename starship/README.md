@@ -95,15 +95,19 @@ rows = [
 ]
 ```
 
-Available tokens: `$directory`, `$git_branch`, `$git_status`, `$git_state`, `$rust`, `$starship` (the composite `starship prompt` line, this is the one that renders the config above).
+Available tokens: any [starship module](https://starship.rs/config/#modules) name. Examples: `$directory`, `$git_branch`, `$aws`, `$nodejs`. You can also use `$starship`, the composite `starship prompt` line that renders the config above. Add any starship module name to `rows`, and it renders. This needs no herdr-starship code changes or rebuild.
 
-You can use either the starship-flavored individual tokens above, or `$starship` to invoke your config file (or the bundled default if you haven't provided one).
+You can use individual starship-module tokens, or use `$starship` to run your config file. If you have not provided your own file, herdr-starship uses the bundled default. If `rows` has no starship-module tokens at all, herdr-starship falls back to its default five modules: `directory`, `git_branch`, `git_status`, `git_state`, `rust`.
 
 Then reload:
 
 ```bash
 herdr server reload-config
 ```
+
+### Sidebar width
+
+Herdr's `~/.config/herdr/config.toml` has an `[ui].sidebar_width` value, next to `sidebar_min_width` and `sidebar_max_width`. This value sets the column budget that herdr-starship fits its output to. If this value is not set, herdr-starship uses the default value of 26.
 
 ## Uninstall
 

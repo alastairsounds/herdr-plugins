@@ -1,3 +1,4 @@
+mod config;
 mod fitter;
 mod starship;
 
@@ -6,7 +7,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use unicode_width::UnicodeWidthStr;
 
-const MODULES: [&str; 5] = ["directory", "git_branch", "git_status", "git_state", "rust"];
+/// Used when `rows` has no `$module` tokens. Keeps the old behavior for
+/// users who have not changed their Herdr config.
+const DEFAULT_MODULES: [&str; 5] = ["directory", "git_branch", "git_status", "git_state", "rust"];
 
 /// Reads `workspace_cwd` from `HERDR_PLUGIN_CONTEXT_JSON`, since Herdr runs hooks in the
 /// plugin's own directory, not the workspace's. Uses the current directory otherwise.
@@ -54,11 +57,28 @@ fn invoke_prompt(repo: &Path, config: &Path) -> String {
     String::from_utf8_lossy(&output.stdout).to_string()
 }
 
+/// `"starship"` is this plugin's composite key, not a real starship module.
+/// The default install config includes it, so this exclusion is the common case.
+fn resolve_modules(herdr_config: &config::HerdrConfig) -> Vec<String> {
+    let discovered: Vec<String> = herdr_config
+        .modules
+        .iter()
+        .filter(|name| name.as_str() != "starship")
+        .cloned()
+        .collect();
+    if discovered.is_empty() {
+        DEFAULT_MODULES.iter().map(|s| s.to_string()).collect()
+    } else {
+        discovered
+    }
+}
+
 /// Composite `starship` entry goes first: `fit()` drops the last entry first, and most
 /// sidebar configs render only `$starship`.
-fn collect_modules(repo: &Path, config: &Path) -> Vec<Module> {
+fn collect_modules(repo: &Path, config: &Path, modules: &[String]) -> Vec<Module> {
     let mut rendered = vec![Module::new("starship", invoke_prompt(repo, config))];
-    rendered.extend(MODULES.into_iter().filter_map(|name| {
+    rendered.extend(modules.iter().filter_map(|name| {
+        let name = name.as_str();
         match starship::invoke_module(name, repo, Some(config)) {
             Ok(content) if name == "directory" => Some(Module::with_abbreviate(
                 name,
@@ -95,8 +115,13 @@ fn print_modules(modules: &[Module]) {
     }
 }
 
-fn parse_budget(args: &[String]) -> usize {
-    args.get(1).and_then(|a| a.parse().ok()).unwrap_or(26)
+/// A CLI arg, if present, always wins over config. A manual `cargo run 40`
+/// still works, even when config sets `sidebar_width`.
+fn parse_budget(args: &[String], config_width: Option<usize>) -> usize {
+    args.get(1)
+        .and_then(|a| a.parse().ok())
+        .or(config_width)
+        .unwrap_or(26)
 }
 
 fn wants_push(args: &[String]) -> bool {
@@ -120,9 +145,18 @@ fn main() {
     let repo = target_repo();
     let config = config_path();
     let args: Vec<String> = std::env::args().collect();
-    let budget = parse_budget(&args);
 
-    let rendered = collect_modules(&repo, &config);
+    let herdr_config = match config::default_path() {
+        Some(path) => config::load(&path),
+        None => {
+            eprintln!("config: $HOME not set, skipping ~/.config/herdr/config.toml");
+            config::HerdrConfig::default()
+        }
+    };
+    let budget = parse_budget(&args, herdr_config.sidebar_width);
+    let modules = resolve_modules(&herdr_config);
+
+    let rendered = collect_modules(&repo, &config, &modules);
     println!("--- output (raw output) ---");
     print_modules(&rendered);
 
@@ -256,9 +290,9 @@ mod tests {
     }
 
     #[test]
-    fn parse_budget_defaults_to_26_when_arg_missing() {
+    fn parse_budget_defaults_to_26_when_arg_and_config_missing() {
         let args = vec!["herdr-starship".to_string()];
-        let result = parse_budget(&args);
+        let result = parse_budget(&args, None);
 
         assert_eq!(result, 26);
     }
@@ -266,7 +300,23 @@ mod tests {
     #[test]
     fn parse_budget_parses_provided_arg() {
         let args = vec!["herdr-starship".to_string(), "40".to_string()];
-        let result = parse_budget(&args);
+        let result = parse_budget(&args, None);
+
+        assert_eq!(result, 40);
+    }
+
+    #[test]
+    fn parse_budget_uses_config_when_arg_absent() {
+        let args = vec!["herdr-starship".to_string()];
+        let result = parse_budget(&args, Some(50));
+
+        assert_eq!(result, 50);
+    }
+
+    #[test]
+    fn parse_budget_arg_wins_over_config() {
+        let args = vec!["herdr-starship".to_string(), "40".to_string()];
+        let result = parse_budget(&args, Some(50));
 
         assert_eq!(result, 40);
     }
@@ -297,9 +347,71 @@ mod tests {
         let _guard = starship::ENV_LOCK.lock().unwrap();
         let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
         let config = repo.join("examples/starship-herdr.toml");
-        let result = collect_modules(repo, &config);
+        let modules = resolve_modules(&config::HerdrConfig::default());
+        let result = collect_modules(repo, &config, &modules);
 
         assert!(result.iter().any(|m| m.name == "starship"));
+    }
+
+    /// A non-starship `$`-token (for example `$num`) degrades to a logged skip
+    /// instead of crashing.
+    #[test]
+    fn collect_modules_skips_unknown_module_without_crashing() {
+        let _guard = starship::ENV_LOCK.lock().unwrap();
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let config = repo.join("examples/starship-herdr.toml");
+        let modules = vec!["num".to_string()];
+        let result = collect_modules(repo, &config, &modules);
+
+        assert!(!result.iter().any(|m| m.name == "num"));
+    }
+
+    /// With no `$module` tokens in `rows`, this returns the same 5 hardcoded
+    /// modules as before, for users who have not changed `rows`.
+    #[test]
+    fn resolve_modules_falls_back_to_defaults_when_no_module_tokens() {
+        let herdr_config = config::HerdrConfig::default();
+        let result = resolve_modules(&herdr_config);
+
+        assert_eq!(
+            result,
+            DEFAULT_MODULES
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// Regression test. `$starship` in `rows` must not count as a `$module`
+    /// token, or every installed user loses the 4 individual per-module tokens.
+    #[test]
+    fn resolve_modules_falls_back_to_defaults_when_only_starship_token_present() {
+        let herdr_config = config::HerdrConfig {
+            modules: vec!["starship".to_string()],
+            sidebar_width: None,
+        };
+        let result = resolve_modules(&herdr_config);
+
+        assert_eq!(
+            result,
+            DEFAULT_MODULES
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// A real `$module` token in `rows` drives discovery instead of the fallback.
+    /// This excludes the reserved `"starship"` name from the result.
+    #[test]
+    fn resolve_modules_uses_discovered_tokens_excluding_starship() {
+        let herdr_config = config::HerdrConfig {
+            modules: vec!["starship".to_string(), "aws".to_string()],
+            sidebar_width: None,
+        };
+        let result = resolve_modules(&herdr_config);
+
+        assert_eq!(result, vec!["aws".to_string()]);
     }
 
     /// Disposable, unfocused `herdr` workspace for `push_tokens` tests. Closes on drop.
