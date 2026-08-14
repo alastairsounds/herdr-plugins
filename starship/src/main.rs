@@ -4,7 +4,7 @@ mod starship;
 
 use fitter::Module;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use unicode_width::UnicodeWidthStr;
 
 /// Used when `rows` has no `$module` tokens. Keeps the old behavior for
@@ -42,9 +42,9 @@ fn config_path() -> PathBuf {
 }
 
 /// Runs `starship prompt` to render the whole configured line in one call.
-fn invoke_prompt(repo: &Path, config: &Path) -> String {
-    let output = Command::new("starship")
-        .arg("prompt")
+fn invoke_prompt(repo: &Path, config: &Path) -> Result<String, starship::AdapterError> {
+    let mut cmd = Command::new("starship");
+    cmd.arg("prompt")
         .arg("--path")
         .arg(repo)
         .arg("--terminal-width")
@@ -52,9 +52,10 @@ fn invoke_prompt(repo: &Path, config: &Path) -> String {
         .env("STARSHIP_CONFIG", config)
         // Removes `STARSHIP_SHELL` so output is plain ANSI, not zsh's `%{...%}` markers.
         .env_remove("STARSHIP_SHELL")
-        .output()
-        .expect("failed to run starship prompt");
-    String::from_utf8_lossy(&output.stdout).to_string()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let output = starship::run_with_timeout(cmd, starship::TIMEOUT)?;
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 /// `"starship"` is this plugin's composite key, not a real starship module.
@@ -76,7 +77,13 @@ fn resolve_modules(herdr_config: &config::HerdrConfig) -> Vec<String> {
 /// Composite `starship` entry goes first: `fit()` drops the last entry first, and most
 /// sidebar configs render only `$starship`.
 fn collect_modules(repo: &Path, config: &Path, modules: &[String]) -> Vec<Module> {
-    let mut rendered = vec![Module::new("starship", invoke_prompt(repo, config))];
+    let mut rendered: Vec<Module> = match invoke_prompt(repo, config) {
+        Ok(content) => vec![Module::new("starship", content)],
+        Err(e) => {
+            eprintln!("starship: adapter error: {e}");
+            Vec::new()
+        }
+    };
     rendered.extend(modules.iter().filter_map(|name| {
         let name = name.as_str();
         match starship::invoke_module(name, repo, Some(config)) {
@@ -141,7 +148,17 @@ fn push_tokens(workspace_id: &str, modules: &[Module]) -> Result<(), starship::A
     starship::report_metadata(workspace_id, &tokens)
 }
 
+fn resolve_path() {
+    match starship::resolve_login_shell_path() {
+        Some(path) => unsafe { std::env::set_var("PATH", path) },
+        None => {
+            eprintln!("path-resolve: could not resolve login shell PATH, leaving PATH unchanged")
+        }
+    }
+}
+
 fn main() {
+    resolve_path();
     let repo = target_repo();
     let config = config_path();
     let args: Vec<String> = std::env::args().collect();
@@ -466,5 +483,41 @@ mod tests {
         push_tokens(&ws.id, &modules).unwrap();
 
         assert!(ws.tokens_json().contains(r#""git_state":"REBASING""#));
+    }
+
+    #[test]
+    fn invoke_prompt_hung_subprocess_times_out_returns_error_not_panic() {
+        let _guard = starship::ENV_LOCK.lock().unwrap();
+        let repo = std::env::temp_dir().join("herdr-starship-test-invoke-prompt-hang-repo");
+        let _ = std::fs::create_dir_all(&repo);
+
+        let fake_bin_dir = std::env::temp_dir().join("herdr-starship-test-invoke-prompt-hang-bin");
+        let _ = std::fs::remove_dir_all(&fake_bin_dir);
+        std::fs::create_dir_all(&fake_bin_dir).unwrap();
+        let fake_starship = fake_bin_dir.join("starship");
+        std::fs::write(&fake_starship, "#!/bin/sh\n/bin/sleep 30\n").unwrap();
+        let mut perms = std::fs::metadata(&fake_starship).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+        std::fs::set_permissions(&fake_starship, perms).unwrap();
+
+        let original_path = std::env::var("PATH").ok();
+        unsafe { std::env::set_var("PATH", &fake_bin_dir) };
+        let started = std::time::Instant::now();
+        let result = invoke_prompt(&repo, &config_path());
+        let elapsed = started.elapsed();
+        unsafe {
+            match &original_path {
+                Some(p) => std::env::set_var("PATH", p),
+                None => std::env::remove_var("PATH"),
+            }
+        }
+
+        std::fs::remove_dir_all(&repo).unwrap();
+        std::fs::remove_dir_all(&fake_bin_dir).unwrap();
+        assert!(matches!(result, Err(starship::AdapterError::Timeout)));
+        assert!(
+            elapsed < std::time::Duration::from_secs(10),
+            "expected timeout well under the 30s sleep, took {elapsed:?}"
+        );
     }
 }
