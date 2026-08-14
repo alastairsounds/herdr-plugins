@@ -1,0 +1,21 @@
+id = "alastairsounds.yazi-popup"
+name = "Yazi Popup Picker"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+description = "Pick files with Yazi in a popup and insert them as @path references into the pane that triggered it"
+platforms = ["macos"]
+
+[[panes]]
+id = "picker"
+title = "Yazi Picker"
+placement = "popup"
+width = "80%"
+height = "80%"
+command = ["bash", "-c", "exec \"$HERDR_PLUGIN_ROOT/bin/picker.sh\""]
+
+[[actions]]
+id = "pick"
+title = "Pick file with Yazi"
+description = "Open a Yazi popup and insert the picked path(s) as @path into the pane that triggered it"
+contexts = ["workspace"]
+command = ["bash", "bin/open.sh"]
