@@ -11,7 +11,7 @@ Herdr plugin that renders a `starship.toml` file onto a Herdr workspace's sideba
 ## Install
 
 ```bash
-herdr plugin install alastairsounds/herdr-starship
+herdr plugin install alastairsounds/herdr-plugins/starship
 ```
 
 Herdr builds the plugin (`cargo build`) and wires up its `startup`/`worktree.created`/`workspace.created`/`workspace.focused` hooks automatically.
@@ -108,6 +108,12 @@ herdr server reload-config
 ### Sidebar width
 
 Herdr's `~/.config/herdr/config.toml` has an `[ui].sidebar_width` value, next to `sidebar_min_width` and `sidebar_max_width`. This value sets the column budget that herdr-starship fits its output to. If this value is not set, herdr-starship uses the default value of 26.
+
+## Roadmap
+
+- Color in the sidebar (requires a PR into `herdrdev/herdr`)
+- Parallelize per-module subprocess invocation
+- Support for periodic refresh
 
 ## Uninstall
 

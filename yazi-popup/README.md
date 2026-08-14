@@ -10,7 +10,7 @@ Pops [Yazi](https://yazi-rs.github.io/) open over whichever pane you triggered i
 ## Quick start
 
 ```bash
-herdr plugin install alastairsounds/herdr-yazi-popup
+herdr plugin install alastairsounds/herdr-plugins/yazi-popup
 ```
 
 Add a keybinding in `~/.config/herdr/config.toml`:
