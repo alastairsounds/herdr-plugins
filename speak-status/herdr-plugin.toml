@@ -1,0 +1,16 @@
+id = "speak-status"
+name = "Speak Status"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+description = "Speaks an audible status update (done, waiting, ...) when an agent pane's status changes"
+platforms = ["macos"]
+
+[[build]]
+command = ["uv", "sync"]
+
+[[startup]]
+command = [".venv/bin/python", "-m", "speak_status.daemon", "ensure"]
+
+[[events]]
+on = "pane.agent_status_changed"
+command = [".venv/bin/python", "-m", "speak_status.forwarder"]
