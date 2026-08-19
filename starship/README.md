@@ -109,11 +109,47 @@ herdr server reload-config
 
 Herdr's `~/.config/herdr/config.toml` has an `[ui].sidebar_width` value, next to `sidebar_min_width` and `sidebar_max_width`. This value sets the column budget that herdr-starship fits its output to. If this value is not set, herdr-starship uses the default value of 26.
 
+### Refresh mode
+
+By default (`basic`), tokens refresh on four events: `startup`, `worktree.created`, `workspace.created`, and `workspace.focused`. A workspace that stays focused does not get new git activity until it is focused again.
+
+To fix this, create this file:
+
+```
+~/.config/herdr/plugins/config/herdr-starship/config.toml
+```
+
+```toml
+refresh = "poll"              # "basic" (default) | "poll" | "hook" (reserved, see TODOS.md)
+poll_interval_seconds = 5     # default 5, only meaningful when refresh = "poll"
+```
+
+This file is separate from `starship.toml` in the same directory. `starship.toml` sets what the plugin renders. `config.toml` sets the refresh schedule. The `~/.config/herdr/config.toml` file belongs to Herdr and rejects unknown plugin tables, so these settings cannot live there.
+
+Restart herdr. `poll` mode starts a background process, with a pid file at `~/.local/state/herdr/plugins/herdr-starship/poll.pid`, on both macOS and Linux, with no OS-level scheduler entry. It ticks every `poll_interval_seconds` and refreshes every open workspace, not only the one that triggered a hook.
+
+To stop `poll` mode, do one of these:
+- Set `refresh` back to `basic`.
+- Remove the config file.
+
+Then restart herdr. This stops the process and removes the pid file. No manual step is needed.
+
+`refresh = "hook"` is reserved for a future git-change watcher. This watcher will use file system events on `.git/index`, `.git/HEAD`, and `.git/refs/**`. Today it parses without error but behaves like `basic`, with one logged notice.
+
+**Manual cleanup**
+
+This procedure applies only in one case. You install an earlier version of this plugin, one without the `poll` loop. Herdr does not restart before you do this. In this case, remove the process by hand:
+
+```bash
+kill "$(grep -oE 'pid=[0-9]+' ~/.local/state/herdr/plugins/herdr-starship/poll.pid | cut -d= -f2)"
+rm ~/.local/state/herdr/plugins/herdr-starship/poll.pid
+```
+
 ## Roadmap
 
 - Color in the sidebar (requires a PR into `herdrdev/herdr`)
 - Parallelize per-module subprocess invocation
-- Support for periodic refresh
+- `hook` mode: real git-change fs-watch, replacing `poll` (see `TODOS.md`)
 
 ## Uninstall
 

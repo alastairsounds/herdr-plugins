@@ -1,4 +1,5 @@
 mod config;
+mod detach;
 mod fitter;
 mod starship;
 
@@ -131,8 +132,115 @@ fn parse_budget(args: &[String], config_width: Option<usize>) -> usize {
         .unwrap_or(26)
 }
 
-fn wants_push(args: &[String]) -> bool {
-    args.iter().any(|a| a == "--push")
+/// A simple `--flag` check, since `clap` is overkill for this plugin's tiny CLI.
+fn wants(args: &[String], flag: &str) -> bool {
+    args.iter().any(|a| a == flag)
+}
+
+/// Passed explicitly by `reconcile()`; the loop never re-reads config on wake.
+fn poll_loop_interval(args: &[String]) -> Option<u64> {
+    let idx = args.iter().position(|a| a == "--poll-loop")?;
+    args.get(idx + 1)?.parse().ok()
+}
+
+/// Resolves a workspace's active-pane directory, falling back to the first pane.
+fn resolve_pane_cwd(workspace_id: &str, active_tab_id: Option<&str>) -> Option<PathBuf> {
+    let output = Command::new("herdr")
+        .args(["pane", "list", "--workspace", workspace_id])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let panes = value.get("result")?.get("panes")?.as_array()?;
+    let pane = active_tab_id
+        .and_then(|tab_id| {
+            panes
+                .iter()
+                .find(|p| p.get("tab_id").and_then(|v| v.as_str()) == Some(tab_id))
+        })
+        .or_else(|| panes.first())?;
+    pane.get("cwd").and_then(|v| v.as_str()).map(PathBuf::from)
+}
+
+/// Lists workspace IDs with pane directories, falling back to checkout paths.
+fn list_workspace_targets() -> Vec<(String, PathBuf)> {
+    let output = match Command::new("herdr").args(["workspace", "list"]).output() {
+        Ok(o) if o.status.success() => o,
+        Ok(o) => {
+            eprintln!(
+                "tick: herdr workspace list failed: {}",
+                String::from_utf8_lossy(&o.stderr)
+            );
+            return Vec::new();
+        }
+        Err(e) => {
+            eprintln!("tick: could not run herdr workspace list: {e}");
+            return Vec::new();
+        }
+    };
+    let value: serde_json::Value = match serde_json::from_slice(&output.stdout) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("tick: could not parse herdr workspace list output: {e}");
+            return Vec::new();
+        }
+    };
+    let workspaces = value
+        .get("result")
+        .and_then(|v| v.get("workspaces"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    workspaces
+        .iter()
+        .filter_map(|ws| {
+            let id = ws.get("workspace_id")?.as_str()?.to_string();
+            let active_tab_id = ws.get("active_tab_id").and_then(|v| v.as_str());
+            let repo = resolve_pane_cwd(&id, active_tab_id).or_else(|| {
+                ws.get("worktree")
+                    .and_then(|w| w.get("checkout_path"))
+                    .and_then(|v| v.as_str())
+                    .map(PathBuf::from)
+            });
+            repo.map(|repo| (id, repo))
+        })
+        .collect()
+}
+
+/// Refreshes every open workspace using timeout-bounded module collection.
+fn tick() {
+    // The pid file records the path we're supposed to run from; `current_exe()`
+    // is only a fallback for a manual `--tick` run with no pid file yet.
+    let self_path = detach::installed_binary_path().or_else(|| std::env::current_exe().ok());
+    if let Some(path) = &self_path {
+        if detach::self_check_and_teardown(path) {
+            eprintln!("tick: binary missing, tore down the poll loop, exiting");
+            return;
+        }
+    } else {
+        eprintln!("tick: could not resolve own binary path, skipping self-check");
+    }
+
+    let config = config_path();
+    let herdr_config = match config::default_path() {
+        Some(path) => config::load(&path),
+        None => config::HerdrConfig::default(),
+    };
+    let budget = herdr_config.sidebar_width.unwrap_or(26);
+    let modules = resolve_modules(&herdr_config);
+
+    for (workspace_id, repo) in list_workspace_targets() {
+        detach::with_refresh_lock(|| {
+            let rendered = collect_modules(&repo, &config, &modules);
+            let fitted = fitter::fit(rendered, budget);
+            if let Err(e) = push_tokens(&workspace_id, &fitted) {
+                eprintln!("tick: {workspace_id}: report_metadata error: {e}");
+            }
+        });
+    }
 }
 
 /// Herdr's token store mangles raw ANSI, so this strips it before every push.
@@ -159,9 +267,23 @@ fn resolve_path() {
 
 fn main() {
     resolve_path();
+    let args: Vec<String> = std::env::args().collect();
+
+    if wants(&args, "--tick") {
+        tick();
+        return;
+    }
+
+    if wants(&args, "--poll-loop") {
+        match poll_loop_interval(&args) {
+            Some(interval_seconds) => detach::run_loop(interval_seconds),
+            None => eprintln!("poll-loop: missing or invalid interval argument"),
+        }
+        return;
+    }
+
     let repo = target_repo();
     let config = config_path();
-    let args: Vec<String> = std::env::args().collect();
 
     let herdr_config = match config::default_path() {
         Some(path) => config::load(&path),
@@ -170,6 +292,25 @@ fn main() {
             config::HerdrConfig::default()
         }
     };
+
+    if wants(&args, "--reconcile") {
+        let refresh_config = match config::refresh_config_path() {
+            Some(path) => config::load_refresh(&path),
+            None => {
+                eprintln!("config: $HOME not set, skipping plugin config for refresh settings");
+                config::RefreshConfig::default()
+            }
+        };
+        match std::env::current_exe() {
+            Ok(exe) => detach::reconcile(
+                refresh_config.refresh,
+                &exe,
+                refresh_config.poll_interval_seconds,
+            ),
+            Err(e) => eprintln!("reconcile: could not resolve own binary path: {e}"),
+        }
+    }
+
     let budget = parse_budget(&args, herdr_config.sidebar_width);
     let modules = resolve_modules(&herdr_config);
 
@@ -181,13 +322,19 @@ fn main() {
     println!("\n--- fitted to budget={budget} columns ---");
     print_modules(&fitted);
 
-    if wants_push(&args) {
+    if wants(&args, "--push") {
         let workspace_id = std::env::var("HERDR_WORKSPACE_ID")
             .expect("--push requires HERDR_WORKSPACE_ID (run inside a herdr session)");
-        match push_tokens(&workspace_id, &fitted) {
-            Ok(()) => println!("\npushed to workspace {workspace_id}"),
-            Err(e) => eprintln!("\nreport_metadata error: {e}"),
-        }
+        // Re-renders under the lock rather than reusing `fitted` above, so the pushed value
+        // is always computed after any poll tick this waited on, never before it.
+        detach::with_refresh_lock(|| {
+            let rendered = collect_modules(&repo, &config, &modules);
+            let fitted = fitter::fit(rendered, budget);
+            match push_tokens(&workspace_id, &fitted) {
+                Ok(()) => println!("\npushed to workspace {workspace_id}"),
+                Err(e) => eprintln!("\nreport_metadata error: {e}"),
+            }
+        });
     }
 }
 
@@ -345,15 +492,48 @@ mod tests {
             "26".to_string(),
             "--push".to_string(),
         ];
-        let result = wants_push(&args);
+        let result = wants(&args, "--push");
 
         assert!(result);
     }
 
     #[test]
+    fn poll_loop_interval_parses_value_following_flag() {
+        let args = vec![
+            "herdr-starship".to_string(),
+            "--poll-loop".to_string(),
+            "5".to_string(),
+        ];
+        let result = poll_loop_interval(&args);
+
+        assert_eq!(result, Some(5));
+    }
+
+    #[test]
+    fn poll_loop_interval_none_when_flag_absent() {
+        let args = vec!["herdr-starship".to_string()];
+        let result = poll_loop_interval(&args);
+
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn poll_loop_interval_none_when_value_missing_or_invalid() {
+        let args = vec!["herdr-starship".to_string(), "--poll-loop".to_string()];
+        assert_eq!(poll_loop_interval(&args), None);
+
+        let args = vec![
+            "herdr-starship".to_string(),
+            "--poll-loop".to_string(),
+            "notanumber".to_string(),
+        ];
+        assert_eq!(poll_loop_interval(&args), None);
+    }
+
+    #[test]
     fn wants_push_false_when_flag_absent() {
         let args = vec!["herdr-starship".to_string(), "26".to_string()];
-        let result = wants_push(&args);
+        let result = wants(&args, "--push");
 
         assert!(!result);
     }
@@ -406,6 +586,7 @@ mod tests {
         let herdr_config = config::HerdrConfig {
             modules: vec!["starship".to_string()],
             sidebar_width: None,
+            ..Default::default()
         };
         let result = resolve_modules(&herdr_config);
 
@@ -425,6 +606,7 @@ mod tests {
         let herdr_config = config::HerdrConfig {
             modules: vec!["starship".to_string(), "aws".to_string()],
             sidebar_width: None,
+            ..Default::default()
         };
         let result = resolve_modules(&herdr_config);
 

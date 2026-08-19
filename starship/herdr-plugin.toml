@@ -3,13 +3,13 @@ name = "herdr-starship"
 version = "0.1.0"
 min_herdr_version = "0.8.0"
 description = "Renders starship modules onto a Herdr workspace's sidebar via report-metadata"
-platforms = ["macos"]
+platforms = ["macos", "linux"]
 
 [[build]]
 command = ["cargo", "build"]
 
 [[startup]]
-command = ["target/debug/herdr-starship", "--push"]
+command = ["target/debug/herdr-starship", "--push", "--reconcile"]
 
 [[events]]
 on = "worktree.created"
