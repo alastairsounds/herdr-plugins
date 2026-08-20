@@ -1,0 +1,33 @@
+[private]
+just:
+    @just --list --unsorted --list-prefix="--> "
+
+# Install dependencies
+[group('prep')]
+install:
+    uv sync
+
+# Run the test suite
+[group('dev')]
+test:
+    uv run pytest
+
+# Run the daemon in the foreground for manual testing
+[group('dev')]
+run-daemon:
+    uv run python -m speak_status.daemon ensure
+
+# Lint the project
+[group('format')]
+lint:
+    uv run ruff check .
+
+# Format the code
+[group('format')]
+format:
+    uv run ruff format .
+
+# Preview formatting changes without applying them
+[group('format')]
+format-diff:
+    uv run ruff format --diff .
