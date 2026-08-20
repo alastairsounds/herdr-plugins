@@ -1,7 +1,7 @@
 import wave
 
 from speak_status import protocol
-from speak_status.daemon import _pad_leading_silence, _teardown
+from speak_status.daemon import SELF_CHECK_INTERVAL_S, _due_for_self_check, _pad_leading_silence, _teardown
 
 
 def _write_wav(path, frames: bytes, framerate=24000, sampwidth=2, nchannels=1):
@@ -40,3 +40,11 @@ def test_teardown_removes_socket_and_pid_files(tmp_path, monkeypatch):
 
     assert not protocol.socket_path().exists()
     assert not protocol.pid_path().exists()
+
+
+def test_due_for_self_check_fires_on_elapsed_time_even_under_continuous_traffic():
+    # A busy socket never causes an accept() timeout. So the self-check must
+    # use wall-clock time, not the accept() timeout.
+    start = 1000.0
+    assert not _due_for_self_check(start, start + SELF_CHECK_INTERVAL_S - 1)
+    assert _due_for_self_check(start, start + SELF_CHECK_INTERVAL_S)

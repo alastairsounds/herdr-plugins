@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import wave
 from pathlib import Path
 
@@ -49,6 +50,10 @@ def _still_installed() -> bool:
     return Path(__file__).resolve().exists()
 
 
+def _due_for_self_check(last_check: float, now: float) -> bool:
+    return now - last_check >= SELF_CHECK_INTERVAL_S
+
+
 def _teardown() -> None:
     protocol.socket_path().unlink(missing_ok=True)
     protocol.pid_path().unlink(missing_ok=True)
@@ -88,13 +93,23 @@ def serve() -> None:
     jobs: queue.Queue = queue.Queue()
     threading.Thread(target=_speak_worker, args=(jobs, model), daemon=True).start()
 
+    last_check = time.monotonic()
     while True:
         try:
             conn, _ = server.accept()
         except TimeoutError:
+            conn = None
+
+        # The check uses elapsed time, not the accept() timeout. This way,
+        # the code still checks a busy socket with continuous traffic for staleness.
+        now = time.monotonic()
+        if _due_for_self_check(last_check, now):
+            last_check = now
             if not _still_installed():
                 _teardown()
                 return
+
+        if conn is None:
             continue
         with conn:
             line = conn.makefile("rb").readline()
