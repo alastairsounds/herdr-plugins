@@ -48,8 +48,7 @@ fn is_private_use(ch: char) -> bool {
     matches!(ch as u32, 0xE000..=0xF8FF | 0xF0000..=0xFFFFD | 0x100000..=0x10FFFD)
 }
 
-/// `unicode-width`'s reported column width, clamped up to at least 2 for PUA codepoints.
-/// Terminals disagree on real glyph width, so overestimating is the safe direction.
+/// Column width from `unicode-width`, clamped to 2 for PUA codepoints since terminals disagree.
 fn glyph_display_width(ch: char) -> usize {
     let width = UnicodeWidthChar::width(ch).unwrap_or(0);
     if is_private_use(ch) {
@@ -63,8 +62,7 @@ fn grapheme_width(g: &str) -> usize {
     g.chars().map(glyph_display_width).sum()
 }
 
-/// A parsed segment of styled text: literal text, or an atomic ANSI escape sequence.
-/// Never split, never counted toward width.
+/// A segment of styled text: literal, or one ANSI escape. Never split or counted toward width.
 enum Span<'a> {
     Text(&'a str),
     Escape(&'a str),
@@ -127,8 +125,7 @@ fn fits(modules: &[Module], budget: usize) -> bool {
     total_width(modules) <= budget
 }
 
-/// Cuts `s` to at most `max_width` display columns at a grapheme boundary.
-/// Escape spans are always kept in full and never counted toward width.
+/// Cuts `s` to `max_width` columns at a grapheme boundary. Escape spans stay whole and uncounted.
 fn truncate_to_width(s: &str, max_width: usize) -> String {
     let mut result = String::new();
     let mut width = 0;
@@ -177,8 +174,7 @@ fn available_width(modules: &[Module], budget: usize, name: &str) -> usize {
     budget.saturating_sub(others + separators)
 }
 
-/// Degrades `modules` through the fit cascade until display width fits `budget` columns.
-/// Priority comes from input order, last degraded first. No module is exempt.
+/// Degrades `modules` until width fits `budget`. The last entry in input order degrades first.
 pub fn fit(modules: Vec<Module>, budget: usize) -> Vec<Module> {
     let mut modules = modules;
     if fits(&modules, budget) {
@@ -265,8 +261,7 @@ mod tests {
         assert_eq!(result, modules);
     }
 
-    /// Drops `git_state` alone to fix overage. Last in input order means top drop
-    /// priority, same as any other name in that spot. Other modules stay whole.
+    /// Drops only `git_state` to fix overage, since it is last in input order.
     #[test]
     fn fit_drop_git_state_alone_resolves_rest_untouched() {
         let modules = vec![
@@ -287,8 +282,7 @@ mod tests {
         );
     }
 
-    /// Drop cascade removes `git_state` and `git_status` only. `directory` and
-    /// `git_branch` survive whole.
+    /// Drop cascade removes `git_state` and `git_status` only. `directory` and `git_branch` survive.
     #[test]
     fn fit_drop_cascade_stops_once_git_state_and_git_status_are_gone() {
         let modules = vec![
@@ -308,8 +302,7 @@ mod tests {
         );
     }
 
-    /// Priority follows input order, not a fixed name list. Moving `directory` last
-    /// degrades it first, ahead of `git_status`/`git_branch`/`git_state`.
+    /// Priority follows input order, not a fixed list. Moving `directory` last degrades it first.
     #[test]
     fn fit_priority_follows_module_input_order() {
         let modules = vec![
@@ -331,8 +324,7 @@ mod tests {
         );
     }
 
-    /// `directory` drops entirely once ellipsis alone has no room. No module has a
-    /// floor. `git_state` drops here too, at zero budget.
+    /// `directory` drops once ellipsis alone has no room. No module has a floor, `git_state` included.
     #[test]
     fn fit_directory_drops_when_no_room_even_truncated() {
         let modules = vec![
@@ -344,9 +336,7 @@ mod tests {
         assert_eq!(result, Vec::<Module>::new());
     }
 
-    /// **Starship**: abbreviate keeps ANSI styling around the basename, real starship
-    /// output shape. `directory` is last in input order, so it degrades first, ahead
-    /// of `git_state`.
+    /// **Starship**: abbreviate keeps ANSI styling on the basename, and `directory` degrades first.
     #[test]
     fn fit_abbreviate_directory_preserves_ansi_styling() {
         let modules = vec![
@@ -430,8 +420,7 @@ mod tests {
         );
     }
 
-    /// No module is exempt from dropping, including `git_state`. Alone, it drops when
-    /// its content does not fit the budget.
+    /// No module is exempt from dropping, `git_state` included, once alone it exceeds `budget`.
     #[test]
     fn fit_git_state_drops_when_it_alone_exceeds_budget() {
         let modules = vec![Module::new("git_state", "(REBASING 1/1)")];
@@ -448,9 +437,7 @@ mod tests {
         assert_eq!(result, Vec::<Module>::new());
     }
 
-    /// **Starship**: clamps Private-Use-Area codepoint width to at least two columns.
-    /// Starship emits nerd-font icons as PUA codepoints, and terminals disagree on
-    /// their real width.
+    /// **Starship**: clamps PUA codepoint width to at least two columns. Icon width varies by terminal.
     #[test]
     fn display_width_pua_codepoint_clamped_to_minimum_two() {
         let result = display_width("\u{e5ff}");
@@ -458,8 +445,7 @@ mod tests {
         assert_eq!(result, 2);
     }
 
-    /// **Starship**: double-width glyph at the truncation boundary moves the cut point.
-    /// A starship nerd-font icon never splits mid-glyph.
+    /// **Starship**: a double-width glyph at the cut point moves the cut, instead of splitting it.
     #[test]
     fn fit_double_width_glyph_at_boundary_not_split() {
         let modules = vec![
@@ -477,8 +463,7 @@ mod tests {
         );
     }
 
-    /// **Herdr**: strips escape sequences but keeps the visible text. Herdr's token
-    /// store mangles ANSI left in a value, so this must run before every push.
+    /// **Herdr**: strips escape sequences, keeping visible text, since Herdr's token store mangles ANSI.
     #[test]
     fn strip_ansi_removes_escape_sequences_keeps_text() {
         let result = strip_ansi("\x1b[1;33mfoo\x1b[0m bar");

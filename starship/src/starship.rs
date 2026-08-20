@@ -115,8 +115,7 @@ fn login_shell() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
 }
 
-/// Uses `-lic`, not `-lc` so PATH exports in `.zshrc` are loaded. Returns `None`
-/// on any failure, so the caller can leave PATH unchanged.
+/// Uses `-lic`, not `-lc`, so `.zshrc` PATH exports load. Returns `None` on failure.
 fn resolve_login_shell_path_with_cache(cache_file: &Path) -> Option<String> {
     let shell = login_shell();
     let rc_file = rc_file_for_shell(&shell);
@@ -267,10 +266,7 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// **Starship**: Malformed config file writes an error to stderr, but still produces valid output.
-    ///
-    /// We want a bad config file to push no tokens, so this function must return Err even when
-    /// starship succeeds with a fallback.
+    /// **Starship**: a malformed config still succeeds via fallback, so this must return `Err` anyway.
     #[test]
     fn invoke_module_malformed_config_returns_error() {
         let _guard = ENV_LOCK.lock().unwrap();
@@ -319,13 +315,13 @@ mod tests {
         fs::remove_dir_all(&fake_bin_dir).unwrap();
     }
 
-    /// **Starship**: Worktree path with shell metacharacters is passed as argv, not interpolated by a shell.
+    /// **Starship**: a worktree path with shell metacharacters is passed as argv, not by a shell.
     #[test]
     fn invoke_module_worktree_path_with_shell_metacharacters_is_not_interpreted() {
         let _guard = ENV_LOCK.lock().unwrap();
         let canary = std::env::temp_dir().join("herdr-starship-injection-canary");
         let _ = fs::remove_file(&canary);
-        // Canary acts as a sentinel for shell injection. If the test fails, the canary file will be created.
+        // The canary file appears only if shell injection succeeds.
         let dir_name = format!(
             "herdr-starship-test-injection; touch {} #",
             canary.display()
@@ -340,8 +336,7 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// Creates a disposable, unfocused herdr workspace for tests of report_metadata
-    /// against the real herdr CLI. Closes the workspace on drop.
+    /// A disposable workspace for `report_metadata` tests against the real CLI. Closes on drop.
     struct ScratchWorkspace {
         id: String,
     }
@@ -358,7 +353,7 @@ mod tests {
                 String::from_utf8_lossy(&output.stderr)
             );
             let stdout = String::from_utf8_lossy(&output.stdout);
-            // Minimal text search, not full JSON parse. e.g. `{"...,"workspace_id":"w3V",...}`
+            // Minimal text search, not a full JSON parse: `{...,"workspace_id":"w3V",...}`
             let key = "\"workspace_id\":\"";
             let start = stdout.find(key).expect("no workspace_id in create output") + key.len();
             let end = stdout[start..].find('"').unwrap() + start;
@@ -393,7 +388,7 @@ mod tests {
         assert!(ws.tokens_json().contains(r#""git_state":"REBASING""#));
     }
 
-    /// **Herdr**: `report-metadata` with multiple tokens in one call writes all tokens to workspace metadata.
+    /// **Herdr**: `report-metadata` writes every token from one call to workspace metadata.
     #[test]
     fn report_metadata_multiple_tokens_in_one_call() {
         let _guard = ENV_LOCK.lock().unwrap();

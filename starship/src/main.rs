@@ -8,12 +8,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use unicode_width::UnicodeWidthStr;
 
-/// Used when `rows` has no `$module` tokens. Keeps the old behavior for
-/// users who have not changed their Herdr config.
+/// Used when `rows` has no `$module` tokens, for users who haven't changed their config.
 const DEFAULT_MODULES: [&str; 5] = ["directory", "git_branch", "git_status", "git_state", "rust"];
 
-/// Reads `workspace_cwd` from `HERDR_PLUGIN_CONTEXT_JSON`, since Herdr runs hooks in the
-/// plugin's own directory, not the workspace's. Uses the current directory otherwise.
+/// Reads `workspace_cwd` from `HERDR_PLUGIN_CONTEXT_JSON`. Hooks run in the plugin's own directory.
 fn target_repo() -> PathBuf {
     std::env::var("HERDR_PLUGIN_CONTEXT_JSON")
         .ok()
@@ -30,8 +28,7 @@ fn extract_json_string(json: &str, key: &str) -> Option<String> {
     Some(json[start..end].to_string())
 }
 
-/// A user's own `starship.toml` in Herdr's per-plugin config dir wins over the bundled
-/// default, so customizing the prompt never requires editing this repo.
+/// A user's own `starship.toml` in the per-plugin config dir wins over the bundled default.
 fn config_path() -> PathBuf {
     if let Some(dir) = std::env::var_os("HERDR_PLUGIN_CONFIG_DIR") {
         let user_config = PathBuf::from(dir).join("starship.toml");
@@ -59,8 +56,7 @@ fn invoke_prompt(repo: &Path, config: &Path) -> Result<String, starship::Adapter
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-/// `"starship"` is this plugin's composite key, not a real starship module.
-/// The default install config includes it, so this exclusion is the common case.
+/// `"starship"` is this plugin's composite key, not a real module. Most configs include it.
 fn resolve_modules(herdr_config: &config::HerdrConfig) -> Vec<String> {
     let discovered: Vec<String> = herdr_config
         .modules
@@ -75,8 +71,7 @@ fn resolve_modules(herdr_config: &config::HerdrConfig) -> Vec<String> {
     }
 }
 
-/// Composite `starship` entry goes first: `fit()` drops the last entry first, and most
-/// sidebar configs render only `$starship`.
+/// Composite `starship` entry goes first, since `fit()` drops the last entry first.
 fn collect_modules(repo: &Path, config: &Path, modules: &[String]) -> Vec<Module> {
     let mut rendered: Vec<Module> = match invoke_prompt(repo, config) {
         Ok(content) => vec![Module::new("starship", content)],
@@ -103,8 +98,7 @@ fn collect_modules(repo: &Path, config: &Path, modules: &[String]) -> Vec<Module
     rendered
 }
 
-/// Cosmetic column width of `s`, ANSI codes stripped. Uses `unicode-width`'s raw
-/// count so alignment matches how most terminals actually render.
+/// Column width of `s` with ANSI stripped, using `unicode-width`'s raw count.
 fn column_width(s: &str) -> usize {
     UnicodeWidthStr::width(fitter::strip_ansi(s).as_str())
 }
@@ -123,8 +117,7 @@ fn print_modules(modules: &[Module]) {
     }
 }
 
-/// A CLI arg, if present, always wins over config. A manual `cargo run 40`
-/// still works, even when config sets `sidebar_width`.
+/// A CLI arg always wins over config, so `cargo run 40` still works with `sidebar_width` set.
 fn parse_budget(args: &[String], config_width: Option<usize>) -> usize {
     args.get(1)
         .and_then(|a| a.parse().ok())
@@ -212,8 +205,7 @@ fn list_workspace_targets() -> Vec<(String, PathBuf)> {
 
 /// Refreshes every open workspace using timeout-bounded module collection.
 fn tick() {
-    // The pid file records the path we're supposed to run from; `current_exe()`
-    // is only a fallback for a manual `--tick` run with no pid file yet.
+    // The pid file has our run path. `current_exe()` is only a manual `--tick` fallback.
     let self_path = detach::installed_binary_path().or_else(|| std::env::current_exe().ok());
     if let Some(path) = &self_path {
         if detach::self_check_and_teardown(path) {
@@ -325,8 +317,7 @@ fn main() {
     if wants(&args, "--push") {
         let workspace_id = std::env::var("HERDR_WORKSPACE_ID")
             .expect("--push requires HERDR_WORKSPACE_ID (run inside a herdr session)");
-        // Re-renders under the lock rather than reusing `fitted` above, so the pushed value
-        // is always computed after any poll tick this waited on, never before it.
+        // Re-renders under the lock, so the pushed value reflects any poll tick it waited on.
         detach::with_refresh_lock(|| {
             let rendered = collect_modules(&repo, &config, &modules);
             let fitted = fitter::fit(rendered, budget);
@@ -550,8 +541,7 @@ mod tests {
         assert!(result.iter().any(|m| m.name == "starship"));
     }
 
-    /// A non-starship `$`-token (for example `$num`) degrades to a logged skip
-    /// instead of crashing.
+    /// A non-starship token like `$num` degrades to a logged skip, not a crash.
     #[test]
     fn collect_modules_skips_unknown_module_without_crashing() {
         let _guard = starship::ENV_LOCK.lock().unwrap();
@@ -563,8 +553,7 @@ mod tests {
         assert!(!result.iter().any(|m| m.name == "num"));
     }
 
-    /// With no `$module` tokens in `rows`, this returns the same 5 hardcoded
-    /// modules as before, for users who have not changed `rows`.
+    /// With no `$module` tokens in `rows`, returns the same 5 modules as before.
     #[test]
     fn resolve_modules_falls_back_to_defaults_when_no_module_tokens() {
         let herdr_config = config::HerdrConfig::default();
@@ -579,8 +568,7 @@ mod tests {
         );
     }
 
-    /// Regression test. `$starship` in `rows` must not count as a `$module`
-    /// token, or every installed user loses the 4 individual per-module tokens.
+    /// Regression: `$starship` must not count as a `$module` token, or users lose 4 tokens.
     #[test]
     fn resolve_modules_falls_back_to_defaults_when_only_starship_token_present() {
         let herdr_config = config::HerdrConfig {
@@ -599,8 +587,7 @@ mod tests {
         );
     }
 
-    /// A real `$module` token in `rows` drives discovery instead of the fallback.
-    /// This excludes the reserved `"starship"` name from the result.
+    /// A real `$module` token in `rows` drives discovery, excluding the reserved `"starship"` name.
     #[test]
     fn resolve_modules_uses_discovered_tokens_excluding_starship() {
         let herdr_config = config::HerdrConfig {
@@ -630,7 +617,7 @@ mod tests {
                 String::from_utf8_lossy(&output.stderr)
             );
             let stdout = String::from_utf8_lossy(&output.stdout);
-            // Minimal text search, not a full JSON parse. For example: `{"...,"workspace_id":"w3V",...}`
+            // Minimal text search, not a full JSON parse: `{...,"workspace_id":"w3V",...}`
             let key = "\"workspace_id\":\"";
             let start = stdout.find(key).expect("no workspace_id in create output") + key.len();
             let end = stdout[start..].find('"').unwrap() + start;

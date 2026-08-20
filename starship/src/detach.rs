@@ -206,8 +206,7 @@ fn pid_is_alive(pid: u32) -> bool {
 
 const LOCK_RETRY_DELAY: Duration = Duration::from_millis(50);
 
-/// Serializes refreshes across poll ticks and event-hook pushes, reclaiming
-/// locks left by crashed processes.
+/// Serializes refreshes across ticks and pushes, and reclaims locks left by crashed processes.
 pub fn with_refresh_lock<T>(f: impl FnOnce() -> T) -> T {
     let Some(path) = refresh_lock_path() else {
         return f();
