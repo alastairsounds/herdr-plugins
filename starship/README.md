@@ -120,21 +120,28 @@ To fix this, create this file:
 ```
 
 ```toml
-refresh = "poll"              # "basic" (default) | "poll" | "hook" (reserved, see TODOS.md)
+refresh = "poll"              # "basic" (default) | "poll" | "watch"
 poll_interval_seconds = 5     # default 5, only meaningful when refresh = "poll"
 ```
 
 This file is separate from `starship.toml` in the same directory. `starship.toml` sets what the plugin renders. `config.toml` sets the refresh schedule. The `~/.config/herdr/config.toml` file belongs to Herdr and rejects unknown plugin tables, so these settings cannot live there.
 
-Restart herdr. `poll` mode starts a background process, with a pid file at `~/.local/state/herdr/plugins/herdr-starship/poll.pid`, on both macOS and Linux, with no OS-level scheduler entry. It ticks every `poll_interval_seconds` and refreshes every open workspace, not only the one that triggered a hook.
+After you edit this file, run `herdr server live-handoff`, or restart herdr fully.
 
-To stop `poll` mode, do one of these:
+**Caution:** `herdr server reload-config` is not enough. That command reloads only Herdr's own `config.toml`, not plugin hooks. It cannot apply a refresh-mode change.
+
+Both `poll` and `watch` start a background process, with no OS-level scheduler. The pid file is at `~/.local/state/herdr/plugins/herdr-starship/poll.pid`, on macOS and Linux.
+
+- `poll` ticks every `poll_interval_seconds` and refreshes every open workspace, not just the one that triggered a hook.
+- `watch` reacts to real file and git changes instead of polling. It covers worktrees and plain edits, and ignores build/dependency dirs for free.
+
+To stop either mode, do one of these:
 - Set `refresh` back to `basic`.
 - Remove the config file.
 
-Then restart herdr. This stops the process and removes the pid file. No manual step is needed.
+Then run `herdr server live-handoff` again. This step stops the process and removes the pid file. Switching directly between `poll` and `watch` also takes effect on the next handoff.
 
-`refresh = "hook"` is reserved for a future git-change watcher. This watcher will use file system events on `.git/index`, `.git/HEAD`, and `.git/refs/**`. Today it parses without error but behaves like `basic`, with one logged notice.
+**Note:** rebuilding the plugin binary does not restart an already-running background process. The OS keeps running the old code in memory. Run `live-handoff` again, or kill the pid, to pick up a new build.
 
 **Manual cleanup**
 
@@ -149,7 +156,6 @@ rm ~/.local/state/herdr/plugins/herdr-starship/poll.pid
 
 - Color in the sidebar (requires a PR into `herdrdev/herdr`)
 - Parallelize per-module subprocess invocation
-- `hook` mode: real git-change fs-watch, replacing `poll` (see `TODOS.md`)
 
 ## Uninstall
 
