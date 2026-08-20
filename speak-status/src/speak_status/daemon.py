@@ -7,12 +7,14 @@ import sys
 import tempfile
 import threading
 import wave
+from pathlib import Path
 
 from . import protocol
 
 VOICE = "Hugo"
 SPEED = 1.0
 LEADING_SILENCE_MS = 800
+SELF_CHECK_INTERVAL_S = 300
 
 
 def main() -> None:
@@ -43,6 +45,15 @@ def _daemon_alive() -> bool:
         return False
 
 
+def _still_installed() -> bool:
+    return Path(__file__).resolve().exists()
+
+
+def _teardown() -> None:
+    protocol.socket_path().unlink(missing_ok=True)
+    protocol.pid_path().unlink(missing_ok=True)
+
+
 def _spawn_detached() -> None:
     state_dir = protocol.state_dir()
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -70,6 +81,7 @@ def serve() -> None:
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(str(sock_path))
     server.listen()
+    server.settimeout(SELF_CHECK_INTERVAL_S)
     protocol.pid_path().write_text(str(os.getpid()))
 
     model = KittenTTS("KittenML/kitten-tts-mini-0.8")
@@ -77,7 +89,13 @@ def serve() -> None:
     threading.Thread(target=_speak_worker, args=(jobs, model), daemon=True).start()
 
     while True:
-        conn, _ = server.accept()
+        try:
+            conn, _ = server.accept()
+        except TimeoutError:
+            if not _still_installed():
+                _teardown()
+                return
+            continue
         with conn:
             line = conn.makefile("rb").readline()
         if not line:

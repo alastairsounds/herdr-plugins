@@ -1,6 +1,7 @@
 import wave
 
-from speak_status.daemon import _pad_leading_silence
+from speak_status import protocol
+from speak_status.daemon import _pad_leading_silence, _teardown
 
 
 def _write_wav(path, frames: bytes, framerate=24000, sampwidth=2, nchannels=1):
@@ -28,3 +29,14 @@ def test_pad_leading_silence_prepends_silence_without_losing_audio(tmp_path):
         params.framerate * 500 // 1000 * params.sampwidth * params.nchannels
     )
     assert padded_frames == b"\x00" * expected_silence_bytes + original_frames
+
+
+def test_teardown_removes_socket_and_pid_files(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERDR_PLUGIN_STATE_DIR", str(tmp_path))
+    protocol.socket_path().touch()
+    protocol.pid_path().write_text("123")
+
+    _teardown()
+
+    assert not protocol.socket_path().exists()
+    assert not protocol.pid_path().exists()
