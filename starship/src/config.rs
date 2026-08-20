@@ -1,19 +1,18 @@
 use std::path::{Path, PathBuf};
 
-/// The plugin's refresh setting; `Hook` currently falls back to `Basic`.
+/// Refresh mode: `basic` (hooks only), `poll` (timer), or `watch` (file events).
 #[derive(Debug, Default, PartialEq, Clone, Copy)]
 pub enum RefreshMode {
     #[default]
     Basic,
     Poll,
-    Hook,
+    Watch,
 }
 
 /// Data read from `~/.config/herdr/config.toml`. The caller picks the fallback.
 #[derive(Debug, Default, PartialEq)]
 pub struct HerdrConfig {
-    /// Bare module names taken from every `$`-prefixed token in `rows`.
-    /// This list can include `"starship"`. The caller must exclude it if needed.
+    /// Bare module names from `rows`. Can include `"starship"`, which the caller must remove.
     pub modules: Vec<String>,
     pub sidebar_width: Option<usize>,
 }
@@ -50,8 +49,7 @@ pub fn refresh_config_path() -> Option<PathBuf> {
     })
 }
 
-/// Reads and parses `path`. Missing or bad TOML returns an empty `HerdrConfig`
-/// and logs why, because this file holds settings other tools use too.
+/// Reads `path`. Missing or bad TOML logs a warning and returns empty (other tools share this file).
 pub fn load(path: &Path) -> HerdrConfig {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
@@ -104,7 +102,7 @@ fn read_refresh_mode(value: &toml::Value) -> RefreshMode {
     match raw {
         "basic" => RefreshMode::Basic,
         "poll" => RefreshMode::Poll,
-        "hook" => RefreshMode::Hook,
+        "watch" => RefreshMode::Watch,
         other => {
             eprintln!(
                 "config: unrecognized refresh value {other:?}, falling back to basic"
@@ -123,8 +121,7 @@ fn read_poll_interval_seconds(value: &toml::Value) -> u64 {
         .unwrap_or(DEFAULT_POLL_INTERVAL_SECONDS)
 }
 
-/// Reads each row token as a plain string (`"$aws"`) or an inline table
-/// like `{ token = "$aws", fg = "blue" }`. Returns names with `$` removed.
+/// Reads each row token (a string or a `{ token = "$aws" }` table) and strips the `$` prefix.
 fn discover_modules(value: &toml::Value) -> Vec<String> {
     let Some(rows) = value
         .get("ui")
@@ -263,8 +260,7 @@ mod tests {
         assert_eq!(result.modules, Vec::<String>::new());
     }
 
-    /// Non-starship `$`-tokens (for example `$num`) pass through unfiltered.
-    /// Parser does not need to know which tokens are starship modules.
+    /// Non-starship tokens like `$num` pass through unfiltered. The parser can't tell modules apart.
     #[test]
     fn discover_modules_includes_non_starship_tokens() {
         let path = write_config(
@@ -280,8 +276,7 @@ mod tests {
         assert_eq!(result.modules, vec!["num".to_string(), "rust".to_string()]);
     }
 
-    /// Parser only extracts tokens; it does not know "starship" is reserved.
-    /// main.rs excludes it, where that reservation is defined.
+    /// The parser only extracts tokens. `main.rs` excludes the reserved `"starship"` name.
     #[test]
     fn discover_modules_includes_starship_token_unfiltered() {
         let path = write_config(
@@ -366,15 +361,15 @@ mod tests {
     }
 
     #[test]
-    fn refresh_reads_hook() {
+    fn refresh_reads_watch() {
         let path = write_config(
-            "herdr-starship-test-config-refresh-hook.toml",
-            r#"refresh = "hook""#,
+            "herdr-starship-test-config-refresh-watch.toml",
+            r#"refresh = "watch""#,
         );
         let result = load_refresh(&path);
 
         std::fs::remove_file(&path).unwrap();
-        assert_eq!(result.refresh, RefreshMode::Hook);
+        assert_eq!(result.refresh, RefreshMode::Watch);
     }
 
     #[test]

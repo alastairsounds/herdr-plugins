@@ -274,6 +274,11 @@ fn main() {
         return;
     }
 
+    if wants(&args, "--watch-loop") {
+        detach::run_watch();
+        return;
+    }
+
     let repo = target_repo();
     let config = config_path();
 
