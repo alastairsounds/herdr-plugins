@@ -49,6 +49,16 @@ pub fn refresh_config_path() -> Option<PathBuf> {
     })
 }
 
+/// Falls back to `$HOME`'s plugin dir; the tick loop's env is frozen at spawn.
+pub fn plugin_starship_config() -> Option<PathBuf> {
+    let dir = std::env::var_os("HERDR_PLUGIN_CONFIG_DIR").map(PathBuf::from).or_else(|| {
+        std::env::var_os("HOME")
+            .map(|home| PathBuf::from(home).join(".config/herdr/plugins/config/herdr-starship"))
+    })?;
+    let path = dir.join("starship.toml");
+    path.is_file().then_some(path)
+}
+
 /// Reads `path`. Missing or bad TOML logs a warning and returns empty (other tools share this file).
 pub fn load(path: &Path) -> HerdrConfig {
     let text = match std::fs::read_to_string(path) {
@@ -473,5 +483,76 @@ mod tests {
             result,
             Some(home.join(".config/herdr/plugins/config/herdr-starship/config.toml"))
         );
+    }
+
+    #[test]
+    fn plugin_starship_config_prefers_env_dir_when_set() {
+        let _guard = crate::starship::ENV_LOCK.lock().unwrap();
+        let original = std::env::var_os("HERDR_PLUGIN_CONFIG_DIR");
+        let dir = std::env::temp_dir().join("herdr-starship-test-plugin-config-env-dir");
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = dir.join("starship.toml");
+        std::fs::write(&config, "add_newline = false\n").unwrap();
+        unsafe { std::env::set_var("HERDR_PLUGIN_CONFIG_DIR", &dir) };
+
+        let result = plugin_starship_config();
+
+        match original {
+            Some(value) => unsafe { std::env::set_var("HERDR_PLUGIN_CONFIG_DIR", value) },
+            None => unsafe { std::env::remove_var("HERDR_PLUGIN_CONFIG_DIR") },
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(result, Some(config));
+    }
+
+    /// Proves the fallback saves tick() when the env var is missing at spawn.
+    #[test]
+    fn plugin_starship_config_falls_back_to_home_when_env_unset() {
+        let _guard = crate::starship::ENV_LOCK.lock().unwrap();
+        let original_dir = std::env::var_os("HERDR_PLUGIN_CONFIG_DIR");
+        let original_home = std::env::var_os("HOME");
+        unsafe { std::env::remove_var("HERDR_PLUGIN_CONFIG_DIR") };
+        let home = std::env::temp_dir().join("herdr-starship-test-plugin-config-home");
+        let plugin_dir = home.join(".config/herdr/plugins/config/herdr-starship");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        let config = plugin_dir.join("starship.toml");
+        std::fs::write(&config, "add_newline = false\n").unwrap();
+        unsafe { std::env::set_var("HOME", &home) };
+
+        let result = plugin_starship_config();
+
+        match original_dir {
+            Some(value) => unsafe { std::env::set_var("HERDR_PLUGIN_CONFIG_DIR", value) },
+            None => unsafe { std::env::remove_var("HERDR_PLUGIN_CONFIG_DIR") },
+        }
+        match original_home {
+            Some(value) => unsafe { std::env::set_var("HOME", value) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+        std::fs::remove_dir_all(&home).unwrap();
+        assert_eq!(result, Some(config));
+    }
+
+    #[test]
+    fn plugin_starship_config_none_when_no_file_at_either_location() {
+        let _guard = crate::starship::ENV_LOCK.lock().unwrap();
+        let original_dir = std::env::var_os("HERDR_PLUGIN_CONFIG_DIR");
+        let original_home = std::env::var_os("HOME");
+        unsafe { std::env::remove_var("HERDR_PLUGIN_CONFIG_DIR") };
+        let home = std::env::temp_dir().join("herdr-starship-test-plugin-config-missing");
+        let _ = std::fs::remove_dir_all(&home);
+        unsafe { std::env::set_var("HOME", &home) };
+
+        let result = plugin_starship_config();
+
+        match original_dir {
+            Some(value) => unsafe { std::env::set_var("HERDR_PLUGIN_CONFIG_DIR", value) },
+            None => unsafe { std::env::remove_var("HERDR_PLUGIN_CONFIG_DIR") },
+        }
+        match original_home {
+            Some(value) => unsafe { std::env::set_var("HOME", value) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+        assert_eq!(result, None);
     }
 }

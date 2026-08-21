@@ -53,6 +53,13 @@ fn invoke_prompt(repo: &Path, config: &Path) -> Result<String, starship::Adapter
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let output = starship::run_with_timeout(cmd, starship::TIMEOUT)?;
+
+    // starship exits 0 with default styling on bad config, so check stderr too.
+    if !output.status.success() || !output.stderr.is_empty() {
+        return Err(starship::AdapterError::Failed(
+            String::from_utf8_lossy(&output.stderr).to_string(),
+        ));
+    }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
@@ -216,7 +223,8 @@ fn tick() {
         eprintln!("tick: could not resolve own binary path, skipping self-check");
     }
 
-    let config = config_path();
+    // This loop's env is frozen at spawn, so fall back instead of trusting it.
+    let config = config::plugin_starship_config().unwrap_or_else(config_path);
     let herdr_config = match config::default_path() {
         Some(path) => config::load(&path),
         None => config::HerdrConfig::default(),
@@ -644,14 +652,14 @@ mod tests {
 
     /// **Herdr**: writes raw (ANSI-intact) tokens to the workspace's metadata.
     #[test]
-    fn push_tokens_strips_ansi_before_writing_to_workspace() {
+    fn push_tokens_writes_raw_ansi_intact_to_workspace() {
         let _guard = starship::ENV_LOCK.lock().unwrap();
         let ws = ScratchWorkspace::create("herdr-starship-main-test-push-tokens");
         let modules = vec![Module::new("git_state", "\x1b[1;33mREBASING\x1b[0m")];
 
         push_tokens(&ws.id, &modules).unwrap();
 
-        assert!(ws.tokens_json().contains("\"git_state\":\"[1;33mREBASING[0m\""));
+        assert!(ws.tokens_json().contains(r#""git_state":"[1;33mREBASING[0m""#));
     }
 
     #[test]
@@ -688,5 +696,20 @@ mod tests {
             elapsed < std::time::Duration::from_secs(10),
             "expected timeout well under the 30s sleep, took {elapsed:?}"
         );
+    }
+
+    /// Mirrors invoke_module's stderr check, or bad config renders silently.
+    #[test]
+    fn invoke_prompt_malformed_config_returns_error() {
+        let _guard = starship::ENV_LOCK.lock().unwrap();
+        let repo = std::env::temp_dir().join("herdr-starship-test-invoke-prompt-bad-config-repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let config_path = repo.join("bad-starship.toml");
+        std::fs::write(&config_path, "this is not valid toml [[[").unwrap();
+
+        let result = invoke_prompt(&repo, &config_path);
+
+        std::fs::remove_dir_all(&repo).unwrap();
+        assert!(matches!(result, Err(starship::AdapterError::Failed(_))));
     }
 }
