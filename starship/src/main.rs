@@ -235,15 +235,10 @@ fn tick() {
     }
 }
 
-/// Herdr's token store mangles raw ANSI, so this strips it before every push.
 fn push_tokens(workspace_id: &str, modules: &[Module]) -> Result<(), starship::AdapterError> {
-    let stripped: Vec<(String, String)> = modules
+    let tokens: Vec<(&str, &str)> = modules
         .iter()
-        .map(|m| (m.name.clone(), fitter::strip_ansi(&m.content)))
-        .collect();
-    let tokens: Vec<(&str, &str)> = stripped
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .map(|m| (m.name.as_str(), m.content.as_str()))
         .collect();
     starship::report_metadata(workspace_id, &tokens)
 }
@@ -647,7 +642,7 @@ mod tests {
         }
     }
 
-    /// **Herdr**: writes ANSI-stripped tokens to the workspace's metadata.
+    /// **Herdr**: writes raw (ANSI-intact) tokens to the workspace's metadata.
     #[test]
     fn push_tokens_strips_ansi_before_writing_to_workspace() {
         let _guard = starship::ENV_LOCK.lock().unwrap();
@@ -656,7 +651,7 @@ mod tests {
 
         push_tokens(&ws.id, &modules).unwrap();
 
-        assert!(ws.tokens_json().contains(r#""git_state":"REBASING""#));
+        assert!(ws.tokens_json().contains("\"git_state\":\"[1;33mREBASING[0m\""));
     }
 
     #[test]
