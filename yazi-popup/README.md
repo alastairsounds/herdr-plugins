@@ -2,6 +2,8 @@
 
 Pops [Yazi](https://yazi-rs.github.io/) open over whichever pane you triggered it from, and types your pick(s) back into that pane as `@path`; unsubmitted, like a real `@` autocomplete. Built for referencing files to coding agents (Claude, Codex, etc.) without leaving the keyboard.
 
+![Picking a file in the popup, typed back as @path into the composer](../_demo/yazi-popup/picker.gif)
+
 ## What it does
 
 - `[[panes]] picker`: a `popup`-placement pane (80% width/height) running `bin/picker.sh`, which runs Yazi with `--chooser-file` and, once you pick (or quit), types the result back and exits, closing the popup.

@@ -2,6 +2,8 @@
 
 Herdr plugin that renders a `starship.toml` file onto a Herdr workspace's sidebar.
 
+![Sidebar rendering git and rust state on workspace focus](../_demo/starship/sidebar.png)
+
 ## Requirements
 
 - `starship` and `herdr` on `$PATH`

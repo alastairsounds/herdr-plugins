@@ -10,6 +10,14 @@ Plugins for [Herdr](https://herdr.dev).
 | [yazi-popup](yazi-popup) | Pops [Yazi](https://yazi-rs.github.io/) open over the triggering pane and types picks back as `@path`. |
 | [speak-status](speak-status) | Speaks an audible status update (done, waiting) when an agent pane's status changes. |
 
+### starship
+
+![Sidebar rendering git and rust state on workspace focus](_demo/starship/sidebar.png)
+
+### yazi-popup
+
+![Picking a file in the popup, typed back as @path into the composer](_demo/yazi-popup/picker.gif)
+
 ## Installation
 
 Each plugin lives in its own subdirectory. Install with:
