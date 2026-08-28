@@ -1,0 +1,16 @@
+id = "alastairsounds.number-workspaces"
+name = "Workspace Numbering"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+description = "Stamps sidebar $num tokens across workspaces/panes on startup and on demand"
+platforms = ["macos"]
+
+[[startup]]
+command = ["bash", "bin/number-workspaces.sh"]
+
+[[actions]]
+id = "renumber"
+title = "Renumber workspaces"
+description = "Re-stamp sidebar $num tokens after adding/removing/reordering workspaces"
+contexts = ["global"]
+command = ["bash", "bin/number-workspaces.sh"]

@@ -1,0 +1,33 @@
+# number-workspaces
+
+Stamps the sidebar `$num` token onto each workspace and pane, with its display position. This matches what you see in the sidebar, not herdr's raw creation-order `number` field.
+
+## What it does
+
+- `[[startup]]`: runs `bin/number-workspaces.sh` at launch. Numbers are correct as soon as herdr starts, with no manual step.
+- `[[actions]] renumber`: runs the same script on demand. Use it after you add, remove, or reorder workspaces, to update the numbers right away. Bind it to a key in `~/.config/herdr/config.toml`.
+- The script reads `herdr workspace list` and `herdr pane list`. It groups linked worktrees under their root workspace, to match herdr's sidebar nesting rule. Then it writes each position back with `herdr workspace report-metadata` and `herdr pane report-metadata`, using `--token num=N`.
+
+## Quick start
+
+```bash
+herdr plugin install alastairsounds/herdr-plugins/number-workspaces
+```
+
+Add a keybinding in `~/.config/herdr/config.toml`, to run the action on demand:
+
+```toml
+[[keys.command]]
+key = "prefix+alt+n"
+type = "plugin_action"
+command = "alastairsounds.number-workspaces.renumber"
+description = "Renumber workspaces"
+```
+
+Reload with `herdr server reload-config`. Numbers appear on startup with no key press. If the sidebar order changes, press the key, to update the numbers.
+
+## Requirements
+
+- macOS (Linux and Windows are untested)
+- `jq` on `$PATH`
+- Herdr `>= 0.8.0`
