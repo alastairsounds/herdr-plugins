@@ -5,7 +5,8 @@ Stamps the sidebar `$num` token onto each workspace and pane, with its display p
 ## What it does
 
 - `[[startup]]`: runs `bin/number-workspaces.sh` at launch. Numbers are correct as soon as herdr starts, with no manual step.
-- `[[actions]] renumber`: runs the same script on demand. Use it after you add, remove, or reorder workspaces, to update the numbers right away. Bind it to a key in `~/.config/herdr/config.toml`.
+- `[[events]] workspace.created` and `workspace.closed`: run the same script, to keep numbers correct as the total workspace count changes.
+- `[[actions]] renumber`: runs the same script on demand. Use it after you reorder workspaces, to update the numbers right away. Bind it to a key in `~/.config/herdr/config.toml`.
 - The script reads `herdr workspace list` and `herdr pane list`. It groups linked worktrees under their root workspace, to match herdr's sidebar nesting rule. Then it writes each position back with `herdr workspace report-metadata` and `herdr pane report-metadata`, using `--token num=N`.
 
 ## Quick start

@@ -14,3 +14,11 @@ title = "Renumber workspaces"
 description = "Re-stamp sidebar $num tokens after adding/removing/reordering workspaces"
 contexts = ["global"]
 command = ["bash", "bin/number-workspaces.sh"]
+
+[[events]]
+on = "workspace.created"
+command = ["bash", "bin/number-workspaces.sh"]
+
+[[events]]
+on = "workspace.closed"
+command = ["bash", "bin/number-workspaces.sh"]
