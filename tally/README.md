@@ -27,6 +27,17 @@ description = "Renumber workspaces"
 
 Reload with `herdr server reload-config`. Numbers appear on startup with no key press. If the sidebar order changes, press the key, to update the numbers.
 
+## Pairs well with `switch_workspace`
+
+The `$num` token is most useful together with herdr's `switch_workspace` key, which jumps to workspace N by number. This key is not set by default; add it under `[keys]` in `~/.config/herdr/config.toml`:
+
+```toml
+[keys]
+switch_workspace = "prefix+1..9"
+```
+
+With both set, the sidebar number and the jump key always agree: `prefix+3` goes to the workspace tally marks `3`.
+
 ## Requirements
 
 - macOS (Linux and Windows are untested)
