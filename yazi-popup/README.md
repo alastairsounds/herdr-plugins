@@ -6,7 +6,7 @@ Pops [Yazi](https://yazi-rs.github.io/) open over whichever pane you triggered i
 
 ## What it does
 
-- `[[panes]] picker`: a `popup`-placement pane (80% width/height) running `bin/picker.sh`, which runs Yazi with `--chooser-file` and, once you pick (or quit), types the result back and exits, closing the popup.
+- `[[panes]] picker`: a `popup`-placement pane (80% width/height) that starts `bin/picker.sh` through the user's interactive `$SHELL`, then runs Yazi with `--chooser-file` and, once you pick (or quit), types the result back and exits, closing the popup. This makes exported shell settings such as `FZF_DEFAULT_OPTS_FILE` available to Yazi and the tools it launches.
 - `[[actions]] pick`: `bin/open.sh` reads the triggering pane's id and cwd from herdr's plugin context, then opens the `picker` popup there via `herdr plugin pane open`, passing the target pane id through `--env`.
 
 ## Quick start
