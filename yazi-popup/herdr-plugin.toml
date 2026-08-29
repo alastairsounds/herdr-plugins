@@ -11,7 +11,7 @@ title = "Yazi Picker"
 placement = "popup"
 width = "80%"
 height = "80%"
-command = ["bash", "-c", "exec \"$HERDR_PLUGIN_ROOT/bin/picker.sh\""]
+command = ["bash", "-c", "exec \"${SHELL:-/bin/zsh}\" -ic 'exec \"$HERDR_PLUGIN_ROOT/bin/picker.sh\"'"]
 
 [[actions]]
 id = "pick"
