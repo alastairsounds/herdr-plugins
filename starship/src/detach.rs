@@ -1,4 +1,5 @@
 use crate::config::RefreshMode;
+use crate::herdr::{Cli, Herdr};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
@@ -304,7 +305,7 @@ pub fn run_loop(interval_seconds: u64) {
                 return;
             }
         }
-        crate::tick();
+        crate::tick(&Cli);
     }
 }
 
@@ -357,9 +358,9 @@ fn working_tree_dirs(repo: &Path) -> Vec<PathBuf> {
 }
 
 /// Paths `watch` mode watches. Only `refs/` is `Recursive`, so nested ignored dirs stay hidden.
-fn desired_watch_paths(targets: &[(String, PathBuf)]) -> HashMap<PathBuf, RecursiveMode> {
+fn desired_watch_paths(repos: &[PathBuf]) -> HashMap<PathBuf, RecursiveMode> {
     let mut paths = HashMap::new();
-    for (_, repo) in targets {
+    for repo in repos {
         let Some(git_paths) = resolve_git_paths(repo) else {
             continue;
         };
@@ -394,8 +395,8 @@ fn diff_watch_paths(
 }
 
 /// Rebuilds the watch set from open workspaces and applies the delta. `tick()` already makes this call.
-fn sync_watcher(watcher: &mut RecommendedWatcher, watched: &mut HashSet<PathBuf>, targets: &[(String, PathBuf)]) {
-    let desired = desired_watch_paths(targets);
+fn sync_watcher(watcher: &mut RecommendedWatcher, watched: &mut HashSet<PathBuf>, repos: &[PathBuf]) {
+    let desired = desired_watch_paths(repos);
     let (to_add, to_remove) = diff_watch_paths(watched, &desired);
 
     for (path, mode) in to_add {
@@ -429,7 +430,12 @@ pub fn run_watch() {
     let mut watched = HashSet::new();
 
     loop {
-        sync_watcher(&mut watcher, &mut watched, &crate::list_workspace_targets());
+        let repos: Vec<PathBuf> = Cli
+            .workspace_targets()
+            .into_iter()
+            .map(|t| t.repo)
+            .collect();
+        sync_watcher(&mut watcher, &mut watched, &repos);
 
         match rx.recv_timeout(WATCH_RESYNC_INTERVAL) {
             Ok(_) => {
@@ -442,7 +448,7 @@ pub fn run_watch() {
                         return;
                     }
                 }
-                crate::tick();
+                crate::tick(&Cli);
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
@@ -573,9 +579,8 @@ mod tests {
         let repo = std::env::temp_dir().join("herdr-starship-test-desired-watch-paths-repo");
         let _ = std::fs::remove_dir_all(&repo);
         init_repo(&repo);
-        let targets = vec![("w1".to_string(), repo.clone())];
 
-        let result = desired_watch_paths(&targets);
+        let result = desired_watch_paths(std::slice::from_ref(&repo));
 
         std::fs::remove_dir_all(&repo).unwrap();
         assert_eq!(result.get(&repo.join(".git/HEAD")), Some(&RecursiveMode::NonRecursive));
@@ -590,9 +595,8 @@ mod tests {
         let dir = std::env::temp_dir().join("herdr-starship-test-desired-watch-paths-not-a-repo");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let targets = vec![("w1".to_string(), dir.clone())];
 
-        let result = desired_watch_paths(&targets);
+        let result = desired_watch_paths(std::slice::from_ref(&dir));
 
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(result.is_empty());
@@ -640,7 +644,7 @@ mod tests {
         .unwrap();
         let mut watched = HashSet::new();
 
-        sync_watcher(&mut watcher, &mut watched, &[("w1".to_string(), repo.clone())]);
+        sync_watcher(&mut watcher, &mut watched, std::slice::from_ref(&repo));
         assert!(watched.contains(&repo.join(".git/HEAD")));
 
         sync_watcher(&mut watcher, &mut watched, &[]);
@@ -690,7 +694,7 @@ mod tests {
         })
         .unwrap();
         let mut watched = HashSet::new();
-        sync_watcher(&mut watcher, &mut watched, &[("w1".to_string(), repo.clone())]);
+        sync_watcher(&mut watcher, &mut watched, std::slice::from_ref(&repo));
 
         std::fs::write(repo.join("untracked.txt"), "hi").unwrap();
         let event = rx.recv_timeout(Duration::from_secs(5));

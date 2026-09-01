@@ -164,29 +164,6 @@ pub fn resolve_login_shell_path() -> Option<String> {
     resolve_login_shell_path_with_cache(&path_cache_file())
 }
 
-const SOURCE: &str = "herdr-starship";
-
-pub fn report_metadata(workspace_id: &str, tokens: &[(&str, &str)]) -> Result<(), AdapterError> {
-    let mut cmd = Command::new("herdr");
-    cmd.arg("workspace")
-        .arg("report-metadata")
-        .arg(workspace_id)
-        .arg("--source")
-        .arg(SOURCE);
-    for (key, val) in tokens {
-        cmd.arg("--token").arg(format!("{key}={val}"));
-    }
-    let output = cmd
-        .output()
-        .map_err(|e| AdapterError::Failed(e.to_string()))?;
-    if !output.status.success() {
-        return Err(AdapterError::Failed(
-            String::from_utf8_lossy(&output.stderr).to_string(),
-        ));
-    }
-    Ok(())
-}
-
 // Stops races between env-mutating tests and tests that need an intact `PATH`.
 #[cfg(test)]
 pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -334,79 +311,6 @@ mod tests {
             "shell metacharacters in worktree_path were interpreted"
         );
         fs::remove_dir_all(&dir).unwrap();
-    }
-
-    /// A disposable workspace for `report_metadata` tests against the real CLI. Closes on drop.
-    struct ScratchWorkspace {
-        id: String,
-    }
-
-    impl ScratchWorkspace {
-        fn create(label: &str) -> Self {
-            let output = Command::new("herdr")
-                .args(["workspace", "create", "--no-focus", "--label", label])
-                .output()
-                .expect("herdr workspace create failed to run");
-            assert!(
-                output.status.success(),
-                "herdr workspace create failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            // Minimal text search, not a full JSON parse: `{...,"workspace_id":"w3V",...}`
-            let key = "\"workspace_id\":\"";
-            let start = stdout.find(key).expect("no workspace_id in create output") + key.len();
-            let end = stdout[start..].find('"').unwrap() + start;
-            ScratchWorkspace {
-                id: stdout[start..end].to_string(),
-            }
-        }
-        fn tokens_json(&self) -> String {
-            let output = Command::new("herdr")
-                .args(["workspace", "get", &self.id])
-                .output()
-                .expect("herdr workspace get failed to run");
-            String::from_utf8_lossy(&output.stdout).to_string()
-        }
-    }
-
-    impl Drop for ScratchWorkspace {
-        fn drop(&mut self) {
-            let _ = Command::new("herdr")
-                .args(["workspace", "close", &self.id])
-                .output();
-        }
-    }
-
-    /// **Herdr**: `report-metadata` with one token writes token to workspace metadata.
-    #[test]
-    fn report_metadata_happy_path_one_token() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let ws = ScratchWorkspace::create("herdr-starship-test-report-metadata");
-        report_metadata(&ws.id, &[("git_state", "REBASING")]).unwrap();
-
-        assert!(ws.tokens_json().contains(r#""git_state":"REBASING""#));
-    }
-
-    /// **Herdr**: `report-metadata` writes every token from one call to workspace metadata.
-    #[test]
-    fn report_metadata_multiple_tokens_in_one_call() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let ws = ScratchWorkspace::create("herdr-starship-test-multi-token");
-
-        report_metadata(&ws.id, &[("git_branch", "main"), ("git_state", "MERGING")]).unwrap();
-        let tokens = ws.tokens_json();
-        assert!(tokens.contains(r#""git_branch":"main""#));
-        assert!(tokens.contains(r#""git_state":"MERGING""#));
-    }
-
-    /// **Herdr**: `report-metadata` with a nonexistent workspace returns error, not crash.
-    #[test]
-    fn report_metadata_nonexistent_workspace_returns_error_not_crash() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let result = report_metadata("w-does-not-exist", &[("git_state", "REBASING")]);
-
-        assert!(matches!(result, Err(AdapterError::Failed(_))));
     }
 
     #[test]

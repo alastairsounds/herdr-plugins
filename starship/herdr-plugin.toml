@@ -9,7 +9,7 @@ platforms = ["macos", "linux"]
 command = ["cargo", "build"]
 
 [[startup]]
-command = ["target/debug/herdr-starship", "--push", "--reconcile"]
+command = ["target/debug/herdr-starship", "--tick", "--reconcile"]
 
 [[events]]
 on = "worktree.created"

@@ -111,7 +111,14 @@ Herdr's `~/.config/herdr/config.toml` has an `[ui].sidebar_width` value, next to
 
 ### Refresh mode
 
-By default (`basic`), tokens refresh on four events: `startup`, `worktree.created`, `workspace.created`, and `workspace.focused`. A workspace that stays focused does not get new git activity until it is focused again.
+By default, refresh mode is `basic`. In this mode, `startup` refreshes every open workspace.
+
+After start, `basic` mode refreshes only one workspace, on each of these events:
+- `worktree.created`
+- `workspace.created`
+- `workspace.focused`
+
+As a result, an unfocused workspace shows no new git activity until you focus it again. `poll` and `watch` mode do not have this limit.
 
 To fix this, create this file:
 
