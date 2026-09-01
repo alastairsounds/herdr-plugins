@@ -19,6 +19,10 @@ Plugins for [Herdr](https://herdr.dev).
 
 ![Picking a file in the popup, typed back as @path into the composer](_demo/yazi-popup/picker.gif)
 
+### tally
+
+![Creating workspaces stamps sidebar numbers immediately; closing one renumbers the rest.](_demo/tally/numbering.gif)
+
 ## Installation
 
 Each plugin lives in its own subdirectory. Install with:

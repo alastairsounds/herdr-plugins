@@ -2,6 +2,8 @@
 
 Stamps the sidebar `$num` token onto each workspace and pane, with its display position. This matches what you see in the sidebar, not herdr's raw creation-order `number` field.
 
+![Creating workspaces stamps sidebar numbers immediately; closing one renumbers the rest.](../_demo/tally/numbering.gif)
+
 ## What it does
 
 - `[[startup]]`: runs `bin/tally.sh` at launch. Numbers are correct as soon as herdr starts, with no manual step.
