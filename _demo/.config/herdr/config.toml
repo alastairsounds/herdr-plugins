@@ -1,0 +1,39 @@
+# Demo-only config: just enough to show each plugin working. Isolated via
+# XDG_CONFIG_HOME (see root justfile) so this never touches your real
+# ~/.config/herdr/config.toml.
+
+# herdr-starship: sidebar renders $starship on workspace focus.
+[ui.sidebar.spaces]
+rows = [
+  ["state_icon", "workspace", "$num"],
+  ["$starship"]
+]
+
+# yazi-popup: direct binding, not the README's "prefix+cmd+p" -- VHS can
+# only send Ctrl+<key> combos (no function keys, no alt/cmd), and that
+# also matches herdr's own "most reliable" direct-binding recommendation.
+[[keys.command]]
+key = "ctrl+p"
+type = "plugin_action"
+command = "alastairsounds.yazi-popup.pick"
+description = "pick a file with yazi"
+
+# tally: These three keys have no default binding. This file binds them
+# directly, for the same reason as yazi-popup above: VHS cannot send a
+# prefix chord.
+#
+# Direct binding also keeps the demo's `herdr workspace create` and `herdr
+# workspace focus` CLI calls, and their JSON output, off the screen.
+#
+# The README shows switch_workspace as "prefix+1..9". This file does not
+# bind it, because VHS's Ctrl+<key> chord sends only real ASCII control
+# characters, never Ctrl+<digit>.
+#
+# previous_workspace only changes a backend "focused" flag. It does not move
+# the pane that this attached client shows. But close_workspace closes the
+# workspace that this flag points to, not the pane on screen. So the two
+# keys together close the correct workspace, with no need to switch panes.
+[keys]
+new_workspace = "ctrl+n"
+previous_workspace = "ctrl+k"
+close_workspace = "ctrl+d"
