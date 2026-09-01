@@ -138,17 +138,22 @@ fn poll_loop_interval(args: &[String]) -> Option<u64> {
     args.get(idx + 1)?.parse().ok()
 }
 
-/// Refreshes every open workspace using timeout-bounded module collection.
+/// Refreshes every open workspace in parallel, using timeout-bounded module collection.
 fn sweep(herdr: &dyn Herdr, config: &Path, modules: &[String], budget: usize) {
-    for target in herdr.workspace_targets() {
-        detach::with_refresh_lock(|| {
-            let rendered = collect_modules(&target.repo, config, modules);
-            let fitted = fitter::fit(rendered, budget);
-            if let Err(e) = push_tokens(herdr, &target.workspace_id, &fitted) {
-                eprintln!("tick: {}: report_metadata error: {e}", target.workspace_id);
+    let targets = herdr.workspace_targets();
+    detach::with_refresh_lock(|| {
+        std::thread::scope(|scope| {
+            for target in &targets {
+                scope.spawn(|| {
+                    let rendered = collect_modules(&target.repo, config, modules);
+                    let fitted = fitter::fit(rendered, budget);
+                    if let Err(e) = push_tokens(herdr, &target.workspace_id, &fitted) {
+                        eprintln!("tick: {}: report_metadata error: {e}", target.workspace_id);
+                    }
+                });
             }
         });
-    }
+    });
 }
 
 /// Resolves config, then sweeps every open workspace.
@@ -652,7 +657,9 @@ mod tests {
 
         sweep(&fake, &config_path(), &[], 26);
 
-        assert_eq!(*fake.pushed.lock().unwrap(), vec!["w1", "w2", "w3"]);
+        let mut pushed = fake.pushed.lock().unwrap().clone();
+        pushed.sort();
+        assert_eq!(pushed, vec!["w1", "w2", "w3"]);
     }
 
     /// One broken workspace must not blank the rest.
@@ -664,7 +671,9 @@ mod tests {
 
         sweep(&fake, &config_path(), &[], 26);
 
-        assert_eq!(*fake.pushed.lock().unwrap(), vec!["w2", "w3"]);
+        let mut pushed = fake.pushed.lock().unwrap().clone();
+        pushed.sort();
+        assert_eq!(pushed, vec!["w2", "w3"]);
     }
 
     #[test]

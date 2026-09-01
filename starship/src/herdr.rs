@@ -12,7 +12,8 @@ pub struct WorkspaceTarget {
 }
 
 /// The `herdr` CLI boundary, so a refresh sweep is testable without a live session.
-pub trait Herdr {
+/// `Sync` so `sweep()` can share one `&dyn Herdr` across parallel workspace threads.
+pub trait Herdr: Sync {
     fn workspace_targets(&self) -> Vec<WorkspaceTarget>;
     fn report_metadata(
         &self,
