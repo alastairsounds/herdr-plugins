@@ -1,9 +1,11 @@
 mod config;
 mod detach;
 mod fitter;
+mod herdr;
 mod starship;
 
 use fitter::Module;
+use herdr::Herdr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use unicode_width::UnicodeWidthStr;
@@ -136,75 +138,26 @@ fn poll_loop_interval(args: &[String]) -> Option<u64> {
     args.get(idx + 1)?.parse().ok()
 }
 
-/// Resolves a workspace's active-pane directory, falling back to the first pane.
-fn resolve_pane_cwd(workspace_id: &str, active_tab_id: Option<&str>) -> Option<PathBuf> {
-    let output = Command::new("herdr")
-        .args(["pane", "list", "--workspace", workspace_id])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let value: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
-    let panes = value.get("result")?.get("panes")?.as_array()?;
-    let pane = active_tab_id
-        .and_then(|tab_id| {
-            panes
-                .iter()
-                .find(|p| p.get("tab_id").and_then(|v| v.as_str()) == Some(tab_id))
-        })
-        .or_else(|| panes.first())?;
-    pane.get("cwd").and_then(|v| v.as_str()).map(PathBuf::from)
+/// Refreshes every open workspace in parallel, using timeout-bounded module collection.
+fn sweep(herdr: &dyn Herdr, config: &Path, modules: &[String], budget: usize) {
+    let targets = herdr.workspace_targets();
+    detach::with_refresh_lock(|| {
+        std::thread::scope(|scope| {
+            for target in &targets {
+                scope.spawn(|| {
+                    let rendered = collect_modules(&target.repo, config, modules);
+                    let fitted = fitter::fit(rendered, budget);
+                    if let Err(e) = push_tokens(herdr, &target.workspace_id, &fitted) {
+                        eprintln!("tick: {}: report_metadata error: {e}", target.workspace_id);
+                    }
+                });
+            }
+        });
+    });
 }
 
-/// Lists workspace IDs with pane directories, falling back to checkout paths.
-fn list_workspace_targets() -> Vec<(String, PathBuf)> {
-    let output = match Command::new("herdr").args(["workspace", "list"]).output() {
-        Ok(o) if o.status.success() => o,
-        Ok(o) => {
-            eprintln!(
-                "tick: herdr workspace list failed: {}",
-                String::from_utf8_lossy(&o.stderr)
-            );
-            return Vec::new();
-        }
-        Err(e) => {
-            eprintln!("tick: could not run herdr workspace list: {e}");
-            return Vec::new();
-        }
-    };
-    let value: serde_json::Value = match serde_json::from_slice(&output.stdout) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("tick: could not parse herdr workspace list output: {e}");
-            return Vec::new();
-        }
-    };
-    let workspaces = value
-        .get("result")
-        .and_then(|v| v.get("workspaces"))
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    workspaces
-        .iter()
-        .filter_map(|ws| {
-            let id = ws.get("workspace_id")?.as_str()?.to_string();
-            let active_tab_id = ws.get("active_tab_id").and_then(|v| v.as_str());
-            let repo = resolve_pane_cwd(&id, active_tab_id).or_else(|| {
-                ws.get("worktree")
-                    .and_then(|w| w.get("checkout_path"))
-                    .and_then(|v| v.as_str())
-                    .map(PathBuf::from)
-            });
-            repo.map(|repo| (id, repo))
-        })
-        .collect()
-}
-
-/// Refreshes every open workspace using timeout-bounded module collection.
-fn tick() {
+/// Resolves config, then sweeps every open workspace.
+fn tick(herdr: &dyn Herdr) {
     // The pid file has our run path. `current_exe()` is only a manual `--tick` fallback.
     let self_path = detach::installed_binary_path().or_else(|| std::env::current_exe().ok());
     if let Some(path) = &self_path {
@@ -224,19 +177,15 @@ fn tick() {
     let budget = herdr_config.sidebar_width.unwrap_or(26);
     let modules = resolve_modules(&herdr_config);
 
-    for (workspace_id, repo) in list_workspace_targets() {
-        detach::with_refresh_lock(|| {
-            let rendered = collect_modules(&repo, &config, &modules);
-            let fitted = fitter::fit(rendered, budget);
-            if let Err(e) = push_tokens(&workspace_id, &fitted) {
-                eprintln!("tick: {workspace_id}: report_metadata error: {e}");
-            }
-        });
-    }
+    sweep(herdr, &config, &modules, budget);
 }
 
 /// Herdr's token store mangles raw ANSI, so this strips it before every push.
-fn push_tokens(workspace_id: &str, modules: &[Module]) -> Result<(), starship::AdapterError> {
+fn push_tokens(
+    herdr: &dyn Herdr,
+    workspace_id: &str,
+    modules: &[Module],
+) -> Result<(), starship::AdapterError> {
     let stripped: Vec<(String, String)> = modules
         .iter()
         .map(|m| (m.name.clone(), fitter::strip_ansi(&m.content)))
@@ -245,7 +194,7 @@ fn push_tokens(workspace_id: &str, modules: &[Module]) -> Result<(), starship::A
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    starship::report_metadata(workspace_id, &tokens)
+    herdr.report_metadata(workspace_id, &tokens)
 }
 
 fn resolve_path() {
@@ -260,11 +209,6 @@ fn resolve_path() {
 fn main() {
     resolve_path();
     let args: Vec<String> = std::env::args().collect();
-
-    if wants(&args, "--tick") {
-        tick();
-        return;
-    }
 
     if wants(&args, "--poll-loop") {
         match poll_loop_interval(&args) {
@@ -308,6 +252,11 @@ fn main() {
         }
     }
 
+    if wants(&args, "--tick") {
+        tick(&herdr::Cli);
+        return;
+    }
+
     let budget = parse_budget(&args, herdr_config.sidebar_width);
     let modules = resolve_modules(&herdr_config);
 
@@ -326,7 +275,7 @@ fn main() {
         detach::with_refresh_lock(|| {
             let rendered = collect_modules(&repo, &config, &modules);
             let fitted = fitter::fit(rendered, budget);
-            match push_tokens(&workspace_id, &fitted) {
+            match push_tokens(&herdr::Cli, &workspace_id, &fitted) {
                 Ok(()) => println!("\npushed to workspace {workspace_id}"),
                 Err(e) => eprintln!("\nreport_metadata error: {e}"),
             }
@@ -654,9 +603,77 @@ mod tests {
         let ws = ScratchWorkspace::create("herdr-starship-main-test-push-tokens");
         let modules = vec![Module::new("git_state", "\x1b[1;33mREBASING\x1b[0m")];
 
-        push_tokens(&ws.id, &modules).unwrap();
+        push_tokens(&herdr::Cli, &ws.id, &modules).unwrap();
 
         assert!(ws.tokens_json().contains(r#""git_state":"REBASING""#));
+    }
+
+    /// Records every push, so a sweep is checkable without a live herdr session.
+    struct FakeHerdr {
+        targets: Vec<herdr::WorkspaceTarget>,
+        failing_workspace: Option<String>,
+        pushed: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl FakeHerdr {
+        fn with_targets(ids: &[&str]) -> Self {
+            FakeHerdr {
+                targets: ids
+                    .iter()
+                    .map(|id| herdr::WorkspaceTarget {
+                        workspace_id: id.to_string(),
+                        repo: PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+                    })
+                    .collect(),
+                failing_workspace: None,
+                pushed: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl Herdr for FakeHerdr {
+        fn workspace_targets(&self) -> Vec<herdr::WorkspaceTarget> {
+            self.targets.clone()
+        }
+
+        fn report_metadata(
+            &self,
+            workspace_id: &str,
+            _tokens: &[(&str, &str)],
+        ) -> Result<(), starship::AdapterError> {
+            if self.failing_workspace.as_deref() == Some(workspace_id) {
+                return Err(starship::AdapterError::Failed("fake failure".to_string()));
+            }
+            self.pushed.lock().unwrap().push(workspace_id.to_string());
+            Ok(())
+        }
+    }
+
+    /// Regression: startup must refresh every open workspace, not only the focused one.
+    #[test]
+    fn sweep_pushes_to_every_open_workspace() {
+        let _guard = starship::ENV_LOCK.lock().unwrap();
+        let fake = FakeHerdr::with_targets(&["w1", "w2", "w3"]);
+
+        sweep(&fake, &config_path(), &[], 26);
+
+        let mut pushed = fake.pushed.lock().unwrap().clone();
+        pushed.sort();
+        assert_eq!(pushed, vec!["w1", "w2", "w3"]);
+    }
+
+    /// One broken workspace must not blank the rest.
+    #[test]
+    fn sweep_continues_after_a_failed_push() {
+        let _guard = starship::ENV_LOCK.lock().unwrap();
+        let mut fake = FakeHerdr::with_targets(&["w1", "w2", "w3"]);
+        fake.failing_workspace = Some("w1".to_string());
+
+        sweep(&fake, &config_path(), &[], 26);
+
+        let mut pushed = fake.pushed.lock().unwrap().clone();
+        pushed.sort();
+        assert_eq!(pushed, vec!["w2", "w3"]);
     }
 
     #[test]
