@@ -17,12 +17,12 @@ renumbered=$(echo "$ws_json" | jq -c '
   | sort_by(.[0].number)
   | flatten
   | to_entries
-  | map({workspace_id: .value.workspace_id, number: (.key + 1)})
+  | map({workspace_id: .value.workspace_id, label: .value.label, number: (.key + 1)})
 ')
 
-echo "$renumbered" | jq -r '.[] | "\(.workspace_id)\t\(.number)"' |
-while IFS=$'\t' read -r id num; do
-  herdr workspace report-metadata "$id" --source herdr-number --token num="$num"
+echo "$renumbered" | jq -r '.[] | "\(.workspace_id)\t\(.number)\t\(.label)"' |
+while IFS=$'\t' read -r id num label; do
+  herdr workspace report-metadata "$id" --source herdr-number --token num="$num" --token row="$label $num"
 done
 
 herdr pane list | jq -r --argjson nums "$renumbered" '
