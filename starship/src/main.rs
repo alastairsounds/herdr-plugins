@@ -42,8 +42,12 @@ fn config_path() -> PathBuf {
 }
 
 /// Runs `starship prompt` to render the whole configured line in one call.
-fn invoke_prompt(repo: &Path, config: &Path) -> Result<String, starship::AdapterError> {
+fn invoke_prompt(repo: &Path, config: &Path, workspace_id: Option<&str>) -> Result<String, starship::AdapterError> {
     let mut cmd = Command::new("starship");
+    // A sweep renders every workspace from one process, so the inherited ID belongs to the trigger.
+    if let Some(id) = workspace_id {
+        cmd.env("HERDR_WORKSPACE_ID", id);
+    }
     cmd.arg("prompt")
         .arg("--path")
         .arg(repo)
@@ -81,8 +85,8 @@ fn resolve_modules(herdr_config: &config::HerdrConfig) -> Vec<String> {
 }
 
 /// Composite `starship` entry goes first, since `fit()` drops the last entry first.
-fn collect_modules(repo: &Path, config: &Path, modules: &[String]) -> Vec<Module> {
-    let mut rendered: Vec<Module> = match invoke_prompt(repo, config) {
+fn collect_modules(repo: &Path, config: &Path, modules: &[String], workspace_id: Option<&str>) -> Vec<Module> {
+    let mut rendered: Vec<Module> = match invoke_prompt(repo, config, workspace_id) {
         Ok(content) => vec![Module::new("starship", content)],
         Err(e) => {
             eprintln!("starship: adapter error: {e}");
@@ -152,7 +156,7 @@ fn sweep(herdr: &dyn Herdr, config: &Path, modules: &[String], budget: usize) {
         std::thread::scope(|scope| {
             for target in &targets {
                 scope.spawn(|| {
-                    let rendered = collect_modules(&target.repo, config, modules);
+                    let rendered = collect_modules(&target.repo, config, modules, Some(&target.workspace_id));
                     let fitted = fitter::fit(rendered, budget);
                     if let Err(e) = push_tokens(herdr, &target.workspace_id, &fitted) {
                         eprintln!("tick: {}: report_metadata error: {e}", target.workspace_id);
@@ -263,7 +267,7 @@ fn main() {
     let budget = parse_budget(&args, herdr_config.sidebar_width);
     let modules = resolve_modules(&herdr_config);
 
-    let rendered = collect_modules(&repo, &config, &modules);
+    let rendered = collect_modules(&repo, &config, &modules, None);
     println!("--- output (raw output) ---");
     print_modules(&rendered);
 
@@ -276,7 +280,7 @@ fn main() {
             .expect("--push requires HERDR_WORKSPACE_ID (run inside a herdr session)");
         // Re-renders under the lock, so the pushed value reflects any poll tick it waited on.
         detach::with_refresh_lock(|| {
-            let rendered = collect_modules(&repo, &config, &modules);
+            let rendered = collect_modules(&repo, &config, &modules, Some(&workspace_id));
             let fitted = fitter::fit(rendered, budget);
             match push_tokens(&herdr::Cli, &workspace_id, &fitted) {
                 Ok(()) => println!("\npushed to workspace {workspace_id}"),
@@ -493,7 +497,7 @@ mod tests {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
         let config = repo.join("examples/starship-herdr.toml");
         let modules = resolve_modules(&config::HerdrConfig::default());
-        let result = collect_modules(repo, &config, &modules);
+        let result = collect_modules(repo, &config, &modules, None);
 
         assert!(result.iter().any(|m| m.name == "starship"));
     }
@@ -505,7 +509,7 @@ mod tests {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
         let config = repo.join("examples/starship-herdr.toml");
         let modules = vec!["num".to_string()];
-        let result = collect_modules(repo, &config, &modules);
+        let result = collect_modules(repo, &config, &modules, None);
 
         assert!(!result.iter().any(|m| m.name == "num"));
     }
@@ -697,7 +701,7 @@ mod tests {
         let original_path = std::env::var("PATH").ok();
         unsafe { std::env::set_var("PATH", &fake_bin_dir) };
         let started = std::time::Instant::now();
-        let result = invoke_prompt(&repo, &config_path());
+        let result = invoke_prompt(&repo, &config_path(), None);
         let elapsed = started.elapsed();
         unsafe {
             match &original_path {
@@ -724,7 +728,7 @@ mod tests {
         let config_path = repo.join("bad-starship.toml");
         std::fs::write(&config_path, "this is not valid toml [[[").unwrap();
 
-        let result = invoke_prompt(&repo, &config_path);
+        let result = invoke_prompt(&repo, &config_path, None);
 
         std::fs::remove_dir_all(&repo).unwrap();
         assert!(matches!(result, Err(starship::AdapterError::Failed(_))));
