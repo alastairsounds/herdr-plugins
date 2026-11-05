@@ -3,7 +3,7 @@ name = "Tally"
 version = "0.1.0"
 min_herdr_version = "0.8.0"
 description = "Stamps sidebar $num tokens across workspaces/panes on startup and on demand"
-platforms = ["macos"]
+platforms = ["macos", "linux"]
 
 [[startup]]
 command = ["bash", "bin/tally.sh"]
